@@ -20,10 +20,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+import optuna
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error
 
 import config as cfg
+optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 # ============================================================
 # Logging
@@ -91,39 +93,78 @@ def train_xgboost(train_df: pd.DataFrame, feature_cols: list[str]):
     X = train_df[feature_cols]
     y = train_df["fwd_return_5d"]
     
-    tscv = TimeSeriesSplit(n_splits=5, gap=5)
-    cv_scores = []
+    best_params = {
+        "n_estimators": 100,
+        "max_depth": 4,
+        "learning_rate": 0.05,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "random_state": 42,
+        "n_jobs": -1
+    }
     
-    model = xgb.XGBRegressor(
-        n_estimators=100,
-        max_depth=4,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42,
-        n_jobs=-1
-    )
-    
-    # 1. Walk-Forward Cross Validation
-    for train_idx, test_idx in tscv.split(X):
-        X_train_cv, X_test_cv = X.iloc[train_idx], X.iloc[test_idx]
-        y_train_cv, y_test_cv = y.iloc[train_idx], y.iloc[test_idx]
+    if getattr(cfg, "RUN_OPTUNA", False):
+        logger.info("Running Optuna Hyperparameter Optimization (Walk-Forward CV)...")
         
-        model.fit(X_train_cv, y_train_cv, verbose=False)
-        preds = model.predict(X_test_cv)
-        rmse = np.sqrt(mean_squared_error(y_test_cv, preds))
-        cv_scores.append(rmse)
+        def objective(trial):
+            params = {
+                "n_estimators": trial.suggest_int("n_estimators", 50, 200),
+                "max_depth": trial.suggest_int("max_depth", 3, 10),
+                "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
+                "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+                "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+                "random_state": 42,
+                "n_jobs": -1
+            }
+            
+            tscv = TimeSeriesSplit(n_splits=5, gap=5)
+            cv_scores = []
+            
+            model = xgb.XGBRegressor(**params)
+            
+            for train_idx, test_idx in tscv.split(X):
+                X_train_cv, X_test_cv = X.iloc[train_idx], X.iloc[test_idx]
+                y_train_cv, y_test_cv = y.iloc[train_idx], y.iloc[test_idx]
+                
+                model.fit(X_train_cv, y_train_cv, verbose=False)
+                preds = model.predict(X_test_cv)
+                rmse = np.sqrt(mean_squared_error(y_test_cv, preds))
+                cv_scores.append(rmse)
+                
+            return np.mean(cv_scores)
+            
+        study = optuna.create_study(direction="minimize")
+        # Run 20 trials to keep pipeline reasonably fast
+        study.optimize(objective, n_trials=20)
         
-    avg_rmse = np.mean(cv_scores)
-    logger.info(f"Walk-Forward CV RMSE (5 splits): {avg_rmse:.4f}")
+        logger.info(f"Optuna Best Walk-Forward RMSE: {study.best_value:.4f}")
+        logger.info(f"Optuna Best Params: {study.best_params}")
+        
+        best_params.update(study.best_params)
+    else:
+        # 1. Walk-Forward Cross Validation with default params
+        tscv = TimeSeriesSplit(n_splits=5, gap=5)
+        cv_scores = []
+        model = xgb.XGBRegressor(**best_params)
+        
+        for train_idx, test_idx in tscv.split(X):
+            X_train_cv, X_test_cv = X.iloc[train_idx], X.iloc[test_idx]
+            y_train_cv, y_test_cv = y.iloc[train_idx], y.iloc[test_idx]
+            
+            model.fit(X_train_cv, y_train_cv, verbose=False)
+            preds = model.predict(X_test_cv)
+            rmse = np.sqrt(mean_squared_error(y_test_cv, preds))
+            cv_scores.append(rmse)
+            
+        avg_rmse = np.mean(cv_scores)
+        logger.info(f"Walk-Forward CV RMSE (5 splits): {avg_rmse:.4f}")
     
     # 2. Final Retrain on 100% of data
-    # Now that we proved the model generalizes out-of-sample without leakage,
-    # we retrain on EVERYTHING so the final model has the most recent market data.
-    logger.info("Retraining final model on 100% of historical data...")
+    logger.info("Retraining final model on 100% of historical data with best params...")
+    model = xgb.XGBRegressor(**best_params)
     model.fit(X, y, verbose=False)
     
-    return model
+    return model, best_params
 
 
 def main():
@@ -138,12 +179,17 @@ def main():
     feature_cols = [c for c in train_df.columns if c not in ("ticker", "close", "fwd_return_5d")]
     
     # Train Model
-    model = train_xgboost(train_df, feature_cols)
+    model, best_params = train_xgboost(train_df, feature_cols)
     
     # Save Model
     model_path = cfg.MODELS_DIR / "xgboost_ranking.pkl"
+    model_data = {
+        "model": model,
+        "features": feature_cols,
+        "params": best_params
+    }
     with open(model_path, "wb") as f:
-        pickle.dump({"model": model, "features": feature_cols}, f)
+        pickle.dump(model_data, f)
     logger.info(f"Saved XGBoost model to {model_path.name}")
     
     # Predict on the latest data

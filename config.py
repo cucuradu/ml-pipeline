@@ -73,6 +73,7 @@ VOLUME_TREND_WINDOW = 20
 N_REGIMES = 4                          # Bull, Neutral, Caution, Defensive
 REGIME_PERSISTENCE_BARS = 3            # Days before declaring regime change
 GMM_RANDOM_STATE = 42
+RUN_OPTUNA = True  # Set to True to dynamically optimize XGBoost hyperparameters
 HMM_N_ITER = 200
 
 from typing import Literal

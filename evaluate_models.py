@@ -13,6 +13,8 @@ import numpy as np
 import json
 from pathlib import Path
 from scipy.stats import spearmanr
+import xgboost as xgb
+from sklearn.model_selection import TimeSeriesSplit
 import config as cfg
 
 def evaluate_xgboost():
@@ -38,14 +40,17 @@ def evaluate_xgboost():
     # Sort chronologically for TimeSeriesSplit
     full_df = pd.concat(all_data).sort_index()
     
-    # Define model with same params as phase 5
-    import xgboost as xgb
-    from sklearn.model_selection import TimeSeriesSplit
+    # Load model params from the trained PKL to ensure we evaluate the Optuna-tuned model
+    import pickle
+    with open(cfg.MODELS_DIR / "xgboost_ranking.pkl", "rb") as f:
+        model_data = pickle.load(f)
+        
+    best_params = model_data.get("params", {
+        "n_estimators": 100, "max_depth": 4, "learning_rate": 0.05,
+        "subsample": 0.8, "colsample_bytree": 0.8, "random_state": 42, "n_jobs": -1
+    })
     
-    model = xgb.XGBRegressor(
-        n_estimators=100, max_depth=4, learning_rate=0.05,
-        subsample=0.8, colsample_bytree=0.8, random_state=42, n_jobs=-1
-    )
+    model = xgb.XGBRegressor(**best_params)
     
     # We will use the same features from config or just exclude metadata
     feature_cols = [c for c in full_df.columns if c not in ("ticker", "close", "actual_fwd_5d")]

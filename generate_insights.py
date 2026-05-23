@@ -148,6 +148,19 @@ def generate_json() -> None:
     with open(features_dir / "universe_ranking.json", "r") as f:
         ranking_data = json.load(f)
         
+    top_3 = ranking_data["top_3_sectors"]
+    top_3_vol = {}
+    for sector in top_3:
+        sec_feat = pd.read_csv(features_dir / f"{sector}_features.csv", index_col="date", parse_dates=True)
+        # Calculate annualized 21-day realized volatility
+        rv21 = sec_feat["log_return"].iloc[-21:].std() * np.sqrt(252)
+        top_3_vol[sector] = rv21
+        
+    # Inverse Volatility Weighting
+    inv_vol = {k: 1.0 / v for k, v in top_3_vol.items()}
+    total_inv_vol = sum(inv_vol.values())
+    universe_weights = {k: round(v / total_inv_vol, 4) for k, v in inv_vol.items()}
+        
     with open(features_dir / "systemic_fragility.json", "r") as f:
         fragility_score = json.load(f)["systemic_fragility"]
 
@@ -195,6 +208,7 @@ def generate_json() -> None:
             "trade_slots": deployment_info["trade_slots"]
         },
         "universe_ranking": ranking_data["top_3_sectors"],
+        "universe_weights": universe_weights,
         "volatility": {
             "garch_1d_forecast_pct": garch_forecast_pct,
             "vix_implied_term_structure": term_structure
