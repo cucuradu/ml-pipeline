@@ -178,6 +178,7 @@ def engineer_features_single(
     df: pd.DataFrame,
     ticker: str,
     vix_close: pd.Series | None = None,
+    yield_spread: pd.Series | None = None,
 ) -> pd.DataFrame:
     """
     Full feature engineering for a single ticker.
@@ -214,6 +215,10 @@ def engineer_features_single(
     if vix_close is not None:
         features["vix_level"] = vix_close.reindex(features.index)
 
+    # Attach Yield Curve Spread (10Y - 3M) for SPY
+    if yield_spread is not None:
+        features["yield_curve"] = yield_spread.reindex(features.index)
+
     return features
 
 
@@ -222,21 +227,31 @@ def engineer_all_features(
 ) -> dict[str, pd.DataFrame]:
     """
     Run feature engineering on every ticker.
-    SPY gets VIX level as an extra feature.
+    SPY gets VIX level and Yield Curve as extra features.
     """
     engineered: dict[str, pd.DataFrame] = {}
     vix_close = raw_data.get("VIX", pd.DataFrame()).get("close")
+    tnx_close = raw_data.get("TNX", pd.DataFrame()).get("close")
+    irx_close = raw_data.get("IRX", pd.DataFrame()).get("close")
+    
+    yield_spread = None
+    if tnx_close is not None and irx_close is not None:
+        # Convert IRX from 13W percentage to be comparable with TNX 10Y
+        # Note: Yahoo provides them both in % scale (e.g., 4.5 = 4.5%), so we just subtract
+        yield_spread = tnx_close - irx_close
 
     for ticker, df in raw_data.items():
-        # VIX / VIX3M are not tradeable — only used as feature inputs
-        if ticker in ("VIX", "VIX3M"):
+        # VIX / VIX3M / TNX / IRX are not tradeable — only used as feature inputs
+        if ticker in ("VIX", "VIX3M", "TNX", "IRX"):
             logger.info(f"Skipping {ticker} feature engineering (used as input signal only).")
             continue
 
         logger.info(f"Engineering features for {ticker}...")
 
         attach_vix = vix_close if ticker == "SPY" else None
-        feat = engineer_features_single(df, ticker, attach_vix)
+        attach_yield = yield_spread if ticker == "SPY" else None
+        
+        feat = engineer_features_single(df, ticker, attach_vix, attach_yield)
 
         # Drop rows where features are NaN (warm-up period)
         n_before = len(feat)

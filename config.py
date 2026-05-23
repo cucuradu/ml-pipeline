@@ -22,11 +22,16 @@ for d in [DATA_DIR, OUTPUT_DIR, MODELS_DIR, LOGS_DIR]:
 # ============================================================
 # Data Fetching
 # ============================================================
-# Core index + volatility gauges
-CORE_TICKERS = ["SPY", "^VIX", "^VIX3M"]
+# Core index, volatility gauges, equal-weight proxy, and macro yields
+CORE_TICKERS = ["SPY", "^VIX", "^VIX3M", "RSP", "^TNX", "^IRX"]
 
 # Mapping: yfinance symbol → clean display name (used in outputs/JSON)
-TICKER_DISPLAY_NAMES = {"^VIX": "VIX", "^VIX3M": "VIX3M"}
+TICKER_DISPLAY_NAMES = {
+    "^VIX": "VIX", 
+    "^VIX3M": "VIX3M",
+    "^TNX": "TNX",
+    "^IRX": "IRX"
+}
 
 # Sector ETFs (SPDR Select Sector)
 SECTOR_TICKERS = [
@@ -77,7 +82,7 @@ from typing import Literal
 # ============================================================
 GARCH_P = 1
 GARCH_Q = 1
-GARCH_DIST: Literal["normal", "t"] = "normal"  # Can switch to "t" for fat tails
+GARCH_DIST: Literal["normal", "t"] = "t"  # Changed to "t" for fat tails
 
 # ============================================================
 # Output — The Handshake Contract

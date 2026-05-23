@@ -14,6 +14,7 @@ scipy>=1.13
 # --- Feature Engineering & ML ---
 scikit-learn>=1.5           # GMM clustering, preprocessing, metrics
 hmmlearn>=0.3               # Hidden Markov Models (alternative to GMM)
+xgboost>=2.0                # Phase 5 Universe Ranking
 ta>=0.11                    # Technical analysis indicators (optional helpers)
 
 # --- Volatility Modeling ---
@@ -29,10 +30,11 @@ python-dateutil>=2.9
 requests>=2.32              # For any HTTP needs (VIX term structure, etc.)
 
 # --- GPU Acceleration (PyTorch — for future deep-learning phases) ---
-# Uncomment below if/when we add neural network components:
-# --extra-index-url https://download.pytorch.org/whl/cu124
-# torch>=2.4
-# torchvision>=0.19
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch>=2.4
+torchvision>=0.19
+torch_geometric>=2.5
+networkx>=3.0               # For GNN topology construction
 
 # --- Automation & Scheduling ---
 # cron is system-level (no pip package needed)

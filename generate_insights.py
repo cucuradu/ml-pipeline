@@ -77,15 +77,17 @@ def generate_json() -> None:
     prediction_date = spy_shifted.index[-1].strftime("%Y-%m-%d")
     logger.info(f"Predicting regime for {prediction_date} using T-1 features.")
 
-    # Load GMM
+    # Load HMM
     with open(cfg.MODELS_DIR / "gmm_pipeline.pkl", "rb") as f:
-        gmm_data = pickle.load(f)
-    pipeline = gmm_data["pipeline"]
-    mapping = gmm_data["mapping"]
+        hmm_data = pickle.load(f)
+    scaler = hmm_data["pipeline"]["scaler"]
+    hmm = hmm_data["pipeline"]["hmm"]
+    mapping = hmm_data["mapping"]
 
     # Predict raw regime & confidence
-    proba = pipeline.predict_proba(X_latest)[0]
-    cluster = pipeline.predict(X_latest)[0]
+    X_scaled = scaler.transform(X_latest)
+    proba = hmm.predict_proba(X_scaled)[0]
+    cluster = hmm.predict(X_scaled)[0]
     raw_regime = mapping[cluster]
     raw_confidence = float(np.max(proba))
 
@@ -106,6 +108,24 @@ def generate_json() -> None:
     logger.info(f"Regime: {final_regime} | Raw: {raw_regime} | Confidence: {raw_confidence:.4f}")
 
     # ----------------------------------------------------------------
+    # 1.5. Breadth Divergence (RSP vs SPY)
+    # ----------------------------------------------------------------
+    rsp_feat = pd.read_csv(features_dir / "RSP_features.csv", index_col="date", parse_dates=True)
+    rsp_feat = rsp_feat.sort_index()
+    
+    # Calculate rolling 20-day return for both to see intermediate trend
+    spy_20d_ret = (spy_feat["close"].iloc[-1] / spy_feat["close"].iloc[-20]) - 1
+    rsp_20d_ret = (rsp_feat["close"].iloc[-1] / rsp_feat["close"].iloc[-20]) - 1
+    
+    # Breadth divergence: SPY is up over 20 days, but RSP is down
+    breadth_divergence = bool((spy_20d_ret > 0) and (rsp_20d_ret < 0))
+    logger.info(f"SPY 20d: {spy_20d_ret:.2%}, RSP 20d: {rsp_20d_ret:.2%} -> Divergence: {breadth_divergence}")
+    
+    if breadth_divergence and final_regime == "Bull":
+        logger.warning("Breadth Divergence detected! Downgrading Bull -> Caution")
+        final_regime = "Caution"
+
+    # ----------------------------------------------------------------
     # 2. Volatility
     # ----------------------------------------------------------------
     with open(features_dir / "garch_forecast.json", "r") as f:
@@ -123,7 +143,16 @@ def generate_json() -> None:
     logger.info(f"VIX: {vix_latest:.2f} | VIX3M: {vix3m_latest:.2f} | Term: {term_structure}")
 
     # ----------------------------------------------------------------
-    # 3. Sectors
+    # 3. XGBoost Ranking & Systemic Fragility
+    # ----------------------------------------------------------------
+    with open(features_dir / "universe_ranking.json", "r") as f:
+        ranking_data = json.load(f)
+        
+    with open(features_dir / "systemic_fragility.json", "r") as f:
+        fragility_score = json.load(f)["systemic_fragility"]
+
+    # ----------------------------------------------------------------
+    # 4. Sectors
     # ----------------------------------------------------------------
     sectors_dict = {}
     for sector in cfg.SECTOR_TICKERS:
@@ -141,16 +170,15 @@ def generate_json() -> None:
         else:
             sec_regime = "Choppy"
 
-        # Score heuristic (0 to 1) — sigmoid on average SMA distance
-        score = float(sigmoid((sma50 + sma200) * 10))
+        # The actual forward return prediction from XGBoost
+        xgb_pred = ranking_data["predictions"].get(sector, 0.0)
 
         sectors_dict[sector] = {
             "regime": sec_regime,
-            "score": round(score, 4)
+            "xgb_fwd_return_pred": round(xgb_pred, 4)
         }
 
-    # ----------------------------------------------------------------
-    # 4. Build JSON (The Handshake Contract)
+    # Build JSON (The Handshake Contract)
     # ----------------------------------------------------------------
     deployment_info = cfg.REGIME_DEPLOYMENT_MAP[final_regime]
 
@@ -161,9 +189,12 @@ def generate_json() -> None:
             "regime": final_regime,
             "confidence": round(raw_confidence, 4),
             "persistence_bars": cfg.REGIME_PERSISTENCE_BARS,
+            "breadth_divergence": breadth_divergence,
+            "systemic_fragility": fragility_score,
             "deployment_target": deployment_info["deployment_target"],
             "trade_slots": deployment_info["trade_slots"]
         },
+        "universe_ranking": ranking_data["top_3_sectors"],
         "volatility": {
             "garch_1d_forecast_pct": garch_forecast_pct,
             "vix_implied_term_structure": term_structure
@@ -187,6 +218,8 @@ def main():
     run_script("phase1_data_pipeline.py")
     run_script("phase2_regime_model.py")
     run_script("phase3_volatility_model.py")
+    run_script("phase5_ranking_model.py")
+    run_script("phase6_gnn_topology.py")
 
     logger.info("Generating Insights JSON...")
     generate_json()

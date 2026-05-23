@@ -1,61 +1,68 @@
 {
-  "generated_at": "2026-05-23T18:08:37Z",
+  "generated_at": "2026-05-23T18:35:21Z",
   "model_version": "hmm-garch-v1.0",
   "market": {
-    "regime": "Bull",
-    "confidence": 0.9991,
+    "regime": "Caution",
+    "confidence": 1.0,
     "persistence_bars": 3,
-    "deployment_target": 0.85,
-    "trade_slots": 3
+    "breadth_divergence": false,
+    "systemic_fragility": 0.01818181818181818,
+    "deployment_target": 0.5,
+    "trade_slots": 1
   },
+  "universe_ranking": [
+    "XLB",
+    "XLK",
+    "XLRE"
+  ],
   "volatility": {
-    "garch_1d_forecast_pct": 12.18,
+    "garch_1d_forecast_pct": 12.01,
     "vix_implied_term_structure": "contango"
   },
   "sectors": {
     "XLK": {
       "regime": "Trend",
-      "score": 0.9863
+      "xgb_fwd_return_pred": 0.0018
     },
     "XLF": {
       "regime": "Choppy",
-      "score": 0.5402
+      "xgb_fwd_return_pred": 0.0004
     },
     "XLV": {
       "regime": "Trend",
-      "score": 0.6076
+      "xgb_fwd_return_pred": 0.0014
     },
     "XLE": {
       "regime": "Trend",
-      "score": 0.9071
+      "xgb_fwd_return_pred": -0.0006
     },
     "XLI": {
       "regime": "Trend",
-      "score": 0.7037
+      "xgb_fwd_return_pred": 0.0002
     },
     "XLY": {
       "regime": "Trend",
-      "score": 0.6379
+      "xgb_fwd_return_pred": 0.0007
     },
     "XLP": {
       "regime": "Trend",
-      "score": 0.6745
+      "xgb_fwd_return_pred": 0.0004
     },
     "XLU": {
       "regime": "Choppy",
-      "score": 0.5566
+      "xgb_fwd_return_pred": 0.0013
     },
     "XLB": {
       "regime": "Choppy",
-      "score": 0.6427
+      "xgb_fwd_return_pred": 0.0037
     },
     "XLRE": {
       "regime": "Trend",
-      "score": 0.7524
+      "xgb_fwd_return_pred": 0.0015
     },
     "XLC": {
       "regime": "Trend",
-      "score": 0.5313
+      "xgb_fwd_return_pred": -0.0
     }
   }
 }
