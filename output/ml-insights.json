@@ -1,15 +1,15 @@
 {
-  "generated_at": "2026-05-23T17:20:01Z",
+  "generated_at": "2026-05-23T18:08:37Z",
   "model_version": "hmm-garch-v1.0",
   "market": {
     "regime": "Bull",
-    "confidence": 0.9997,
+    "confidence": 0.9991,
     "persistence_bars": 3,
     "deployment_target": 0.85,
     "trade_slots": 3
   },
   "volatility": {
-    "garch_1d_forecast_pct": 0.1218,
+    "garch_1d_forecast_pct": 12.18,
     "vix_implied_term_structure": "contango"
   },
   "sectors": {

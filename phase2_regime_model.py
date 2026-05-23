@@ -157,23 +157,22 @@ def apply_persistence_filter(raw_regimes: pd.Series, persistence_bars: int) -> p
     """
     A regime change is only accepted if it persists for `persistence_bars` consecutive days.
     Otherwise, we maintain the previous accepted regime.
+    Uses numpy array internally to avoid pandas iloc mutation warnings.
     """
-    filtered = raw_regimes.copy()
-    current_regime = raw_regimes.iloc[0]
-    
-    for i in range(len(raw_regimes)):
-        if i < persistence_bars:
-            filtered.iloc[i] = current_regime
-            continue
-            
-        # Check if the last N bars are all the same new regime
-        recent_bars = raw_regimes.iloc[i - persistence_bars + 1 : i + 1]
-        if len(recent_bars.unique()) == 1:
-            current_regime = recent_bars.iloc[0]
-            
-        filtered.iloc[i] = current_regime
-        
-    return filtered
+    raw_vals = raw_regimes.values.copy()
+    filtered_vals = np.empty_like(raw_vals)
+    current_regime = raw_vals[0]
+
+    for i in range(len(raw_vals)):
+        if i >= persistence_bars:
+            # Check if the last N bars (including current) are all the same regime
+            window = raw_vals[i - persistence_bars + 1 : i + 1]
+            if len(set(window)) == 1:
+                current_regime = window[0]
+
+        filtered_vals[i] = current_regime
+
+    return pd.Series(filtered_vals, index=raw_regimes.index, name=raw_regimes.name)
 
 
 # ============================================================
