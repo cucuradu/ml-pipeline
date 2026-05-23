@@ -35,20 +35,45 @@ def evaluate_xgboost():
         
     if not all_data: return
     
-    full_df = pd.concat(all_data)
+    # Sort chronologically for TimeSeriesSplit
+    full_df = pd.concat(all_data).sort_index()
     
-    # Load model and predict
-    import pickle
-    with open(cfg.MODELS_DIR / "xgboost_ranking.pkl", "rb") as f:
-        model_data = pickle.load(f)
+    # Define model with same params as phase 5
+    import xgboost as xgb
+    from sklearn.model_selection import TimeSeriesSplit
+    
+    model = xgb.XGBRegressor(
+        n_estimators=100, max_depth=4, learning_rate=0.05,
+        subsample=0.8, colsample_bytree=0.8, random_state=42, n_jobs=-1
+    )
+    
+    # We will use the same features from config or just exclude metadata
+    feature_cols = [c for c in full_df.columns if c not in ("ticker", "close", "actual_fwd_5d")]
+    
+    X = full_df[feature_cols]
+    y = full_df["actual_fwd_5d"]
+    
+    tscv = TimeSeriesSplit(n_splits=5)
+    oof_preds = np.zeros(len(full_df))
+    oof_indices = []
+    
+    for train_idx, test_idx in tscv.split(X):
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
         
-    model = model_data["model"]
-    feature_cols = model_data["features"]
+        model.fit(X_train, y_train, verbose=False)
+        preds = model.predict(X_test)
+        
+        # Store out-of-sample predictions
+        oof_preds[test_idx] = preds
+        oof_indices.extend(test_idx)
+        
+    # Filter full_df to only rows that were part of a test set (out-of-sample)
+    oof_df = full_df.iloc[oof_indices].copy()
+    oof_df["pred_fwd_5d"] = oof_preds[oof_indices]
     
-    full_df["pred_fwd_5d"] = model.predict(full_df[feature_cols])
-    
-    # 1. Rank Correlation (Spearman)
-    corr, p_value = spearmanr(full_df["pred_fwd_5d"], full_df["actual_fwd_5d"])
+    # 1. Rank Correlation (Spearman) on Out-Of-Sample data
+    corr, p_value = spearmanr(oof_df["pred_fwd_5d"], oof_df["actual_fwd_5d"])
     print(f"Spearman Rank Correlation: {corr:.4f} (p-value: {p_value:.4e})")
     print("  * Higher is better. A positive correlation means the model correctly")
     print("    ranks which sectors will outperform relative to others.")
@@ -58,7 +83,7 @@ def evaluate_xgboost():
     top1_hit = 0
     total_days = 0
     
-    for date, group in full_df.groupby("date"):
+    for date, group in oof_df.groupby("date"):
         if len(group) < 11: continue # Only evaluate days we have all sectors
         top_pick = group.iloc[group["pred_fwd_5d"].argmax()]
         if top_pick["actual_fwd_5d"] > 0:

@@ -20,7 +20,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import xgboost as xgb
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import mean_squared_error
 
 import config as cfg
 
@@ -72,6 +73,10 @@ def build_training_dataset(features_dir: Path, target_horizon: int = 5) -> tuple
         all_historical.append(historical)
         
     train_df = pd.concat(all_historical)
+    
+    # CRITICAL: Sort by date for proper Time-Series Split
+    train_df = train_df.sort_index()
+    
     latest_df = pd.concat(latest_rows)
     
     return train_df, latest_df
@@ -79,16 +84,15 @@ def build_training_dataset(features_dir: Path, target_horizon: int = 5) -> tuple
 
 def train_xgboost(train_df: pd.DataFrame, feature_cols: list[str]):
     """
-    Trains XGBoost on pooled sector data.
+    Trains XGBoost using Walk-Forward Validation (TimeSeriesSplit).
     """
-    logger.info(f"Training XGBoost on {len(train_df)} pooled sector days...")
+    logger.info(f"Training XGBoost on {len(train_df)} pooled sector days using Walk-Forward CV...")
     
     X = train_df[feature_cols]
     y = train_df["fwd_return_5d"]
     
-    # Train-test split (chronological or random. Random is fine since we just want a cross-sectional mapper,
-    # though time-series split is usually better. We will just fit on 90% for a quick eval).
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
+    tscv = TimeSeriesSplit(n_splits=5)
+    cv_scores = []
     
     model = xgb.XGBRegressor(
         n_estimators=100,
@@ -100,13 +104,24 @@ def train_xgboost(train_df: pd.DataFrame, feature_cols: list[str]):
         n_jobs=-1
     )
     
-    model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+    # 1. Walk-Forward Cross Validation
+    for train_idx, test_idx in tscv.split(X):
+        X_train_cv, X_test_cv = X.iloc[train_idx], X.iloc[test_idx]
+        y_train_cv, y_test_cv = y.iloc[train_idx], y.iloc[test_idx]
+        
+        model.fit(X_train_cv, y_train_cv, verbose=False)
+        preds = model.predict(X_test_cv)
+        rmse = np.sqrt(mean_squared_error(y_test_cv, preds))
+        cv_scores.append(rmse)
+        
+    avg_rmse = np.mean(cv_scores)
+    logger.info(f"Walk-Forward CV RMSE (5 splits): {avg_rmse:.4f}")
     
-    # Eval
-    from sklearn.metrics import mean_squared_error, r2_score
-    preds = model.predict(X_test)
-    rmse = np.sqrt(mean_squared_error(y_test, preds))
-    logger.info(f"XGBoost Test RMSE: {rmse:.4f}")
+    # 2. Final Retrain on 100% of data
+    # Now that we proved the model generalizes out-of-sample without leakage,
+    # we retrain on EVERYTHING so the final model has the most recent market data.
+    logger.info("Retraining final model on 100% of historical data...")
+    model.fit(X, y, verbose=False)
     
     return model
 
