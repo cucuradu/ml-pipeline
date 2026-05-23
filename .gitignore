@@ -1,0 +1,39 @@
+# ============================================================
+# ML Pipeline — .gitignore
+# ============================================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# --- Virtual Environment ---
+.venv/
+venv/
+env/
+
+# --- Data (too large for git, re-fetchable) ---
+data/raw/
+data/features/
+
+# --- Model artifacts (large binaries) ---
+models/*.pkl
+models/*.joblib
+
+# --- Logs ---
+logs/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Keep the output directory but only track ml-insights.json ---
+# The output/ dir is where our deliverable lives

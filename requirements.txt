@@ -1,0 +1,39 @@
+# ============================================================
+# ML Pipeline for Hybrid Trading Bot — Local Engine
+# Optimized for Ubuntu + NVIDIA RTX 5060 Ti (16GB VRAM)
+# ============================================================
+
+# --- Data Acquisition ---
+yfinance>=0.2.40            # Yahoo Finance historical data
+
+# --- Core Scientific Stack ---
+numpy>=1.26,<2.0            # Pinned <2.0 for compatibility with arch/hmmlearn
+pandas>=2.2
+scipy>=1.13
+
+# --- Feature Engineering & ML ---
+scikit-learn>=1.5           # GMM clustering, preprocessing, metrics
+hmmlearn>=0.3               # Hidden Markov Models (alternative to GMM)
+ta>=0.11                    # Technical analysis indicators (optional helpers)
+
+# --- Volatility Modeling ---
+arch>=7.0                   # GARCH(1,1) volatility forecasting
+
+# --- Visualization & Debugging ---
+matplotlib>=3.9
+seaborn>=0.13
+
+# --- Utilities ---
+pytz>=2024.1                # Timezone-aware datetime handling
+python-dateutil>=2.9
+requests>=2.32              # For any HTTP needs (VIX term structure, etc.)
+
+# --- GPU Acceleration (PyTorch — for future deep-learning phases) ---
+# Uncomment below if/when we add neural network components:
+# --extra-index-url https://download.pytorch.org/whl/cu124
+# torch>=2.4
+# torchvision>=0.19
+
+# --- Automation & Scheduling ---
+# cron is system-level (no pip package needed)
+# git is system-level
