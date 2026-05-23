@@ -224,6 +224,9 @@ def main():
     logger.info("Generating Insights JSON...")
     generate_json()
 
+    logger.info("Evaluating Models for Dashboard...")
+    run_script("evaluate_models.py")
+
     logger.info("All phases complete. ✓")
 
 
