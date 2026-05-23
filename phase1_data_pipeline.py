@@ -179,6 +179,7 @@ def engineer_features_single(
     ticker: str,
     vix_close: pd.Series | None = None,
     yield_spread: pd.Series | None = None,
+    spy_return: pd.Series | None = None,
 ) -> pd.DataFrame:
     """
     Full feature engineering for a single ticker.
@@ -219,6 +220,14 @@ def engineer_features_single(
     if yield_spread is not None:
         features["yield_curve"] = yield_spread.reindex(features.index)
 
+    # Calculate Relative Strength vs SPY (for sectors)
+    if spy_return is not None and ticker != "SPY":
+        # We calculate the rolling 21-day relative momentum
+        # How much has this sector outperformed SPY over the last month?
+        sec_21d = features["log_return"].rolling(21).sum()
+        spy_21d = spy_return.reindex(features.index).rolling(21).sum()
+        features["relative_strength_21d"] = sec_21d - spy_21d
+
     return features
 
 
@@ -236,9 +245,12 @@ def engineer_all_features(
     
     yield_spread = None
     if tnx_close is not None and irx_close is not None:
-        # Convert IRX from 13W percentage to be comparable with TNX 10Y
-        # Note: Yahoo provides them both in % scale (e.g., 4.5 = 4.5%), so we just subtract
         yield_spread = tnx_close - irx_close
+        
+    spy_raw = raw_data.get("SPY", pd.DataFrame())
+    spy_return = None
+    if not spy_raw.empty:
+        spy_return = np.log(spy_raw["close"] / spy_raw["close"].shift(1))
 
     for ticker, df in raw_data.items():
         # VIX / VIX3M / TNX / IRX are not tradeable — only used as feature inputs
@@ -251,7 +263,7 @@ def engineer_all_features(
         attach_vix = vix_close if ticker == "SPY" else None
         attach_yield = yield_spread if ticker == "SPY" else None
         
-        feat = engineer_features_single(df, ticker, attach_vix, attach_yield)
+        feat = engineer_features_single(df, ticker, attach_vix, attach_yield, spy_return)
 
         # Drop rows where features are NaN (warm-up period)
         n_before = len(feat)

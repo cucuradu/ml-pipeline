@@ -91,7 +91,7 @@ def train_xgboost(train_df: pd.DataFrame, feature_cols: list[str]):
     X = train_df[feature_cols]
     y = train_df["fwd_return_5d"]
     
-    tscv = TimeSeriesSplit(n_splits=5)
+    tscv = TimeSeriesSplit(n_splits=5, gap=5)
     cv_scores = []
     
     model = xgb.XGBRegressor(

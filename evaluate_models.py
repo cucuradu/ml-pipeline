@@ -53,7 +53,8 @@ def evaluate_xgboost():
     X = full_df[feature_cols]
     y = full_df["actual_fwd_5d"]
     
-    tscv = TimeSeriesSplit(n_splits=5)
+    # Purged CV (Embargo): gap=5 ensures 0 overlap between train target (T to T+5) and test features (T+6)
+    tscv = TimeSeriesSplit(n_splits=5, gap=5)
     oof_preds = np.zeros(len(full_df))
     oof_indices = []
     
@@ -89,14 +90,31 @@ def evaluate_xgboost():
         if top_pick["actual_fwd_5d"] > 0:
             top1_hit += 1
         total_days += 1
-        
     hit_rate = top1_hit / total_days if total_days > 0 else 0
     
     print(f"\nTop-1 Sector Long-Only Hit Rate: {hit_rate:.2%} ({top1_hit}/{total_days} days)")
     
+    # 3. Benchmark (Base Rate & SPY)
+    base_rate = (oof_df["actual_fwd_5d"] > 0).mean()
+    
+    # Get SPY performance for the exact same OOS dates
+    spy = pd.read_csv(cfg.DATA_DIR / "features" / "SPY_features.csv", index_col="date", parse_dates=True)
+    spy["actual_fwd_5d"] = (spy["close"].shift(-5) / spy["close"]) - 1
+    
+    # We only care about the unique dates in the OOS test set
+    oos_dates = oof_df.index.unique()
+    spy_oos = spy.loc[oos_dates].dropna()
+    spy_hit_rate = (spy_oos["actual_fwd_5d"] > 0).mean()
+    
+    print(f"\nBenchmarks (Random Sector vs SPY vs Model):")
+    print(f"  Random Sector Hit Rate: {base_rate:.2%}")
+    print(f"  SPY 5-Day Hit Rate:     {spy_hit_rate:.2%}")
+    print(f"  --> MODEL EDGE:         {hit_rate - spy_hit_rate:+.2%} over SPY")
+    
     return {
         "spearman_correlation": float(corr),
         "top_1_hit_rate_pct": float(hit_rate * 100),
+        "benchmark_spy_hit_rate_pct": float(spy_hit_rate * 100),
         "total_eval_days": total_days
     }
 
