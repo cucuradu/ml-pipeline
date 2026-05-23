@@ -70,12 +70,14 @@ REGIME_PERSISTENCE_BARS = 3            # Days before declaring regime change
 GMM_RANDOM_STATE = 42
 HMM_N_ITER = 200
 
+from typing import Literal
+
 # ============================================================
 # GARCH Volatility Model (Phase 3)
 # ============================================================
 GARCH_P = 1
 GARCH_Q = 1
-GARCH_DIST = "normal"                 # Can switch to "t" for fat tails
+GARCH_DIST: Literal["normal", "t"] = "normal"  # Can switch to "t" for fat tails
 
 # ============================================================
 # Output — The Handshake Contract

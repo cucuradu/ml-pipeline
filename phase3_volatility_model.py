@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from typing import Literal
 from arch import arch_model
 
 import config as cfg
@@ -60,7 +61,7 @@ def load_returns(features_dir: Path) -> pd.Series:
 # ============================================================
 # 2. Train GARCH and Forecast
 # ============================================================
-def fit_garch_and_forecast(returns: pd.Series, p: int = 1, q: int = 1, dist: str = "normal"):
+def fit_garch_and_forecast(returns: pd.Series, p: int = 1, q: int = 1, dist: Literal["normal", "t"] = "normal"):
     """
     Fits GARCH(p,q) model and returns the forecast for T+1.
     Arch models optimize better when data is scaled (e.g., returns * 100).
@@ -73,7 +74,7 @@ def fit_garch_and_forecast(returns: pd.Series, p: int = 1, q: int = 1, dist: str
     # Define model
     # mean="Zero" since daily stock returns have mean ~0. 
     # Alternatively, "Constant" can be used. We'll use "Constant".
-    am = arch_model(scaled_returns, vol="Garch", p=p, q=q, dist=dist, mean="Constant")
+    am = arch_model(scaled_returns, vol="GARCH", p=p, q=q, dist=dist, mean="Constant")
     
     # Fit model (suppress verbose output)
     res = am.fit(disp="off", update_freq=0)
