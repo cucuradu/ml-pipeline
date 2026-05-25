@@ -63,8 +63,13 @@ def load_returns(features_dir: Path) -> pd.Series:
 # ============================================================
 def fit_garch_and_forecast(returns: pd.Series, p: int = 1, q: int = 1, dist: Literal["normal", "t"] = "normal"):
     """
-    Fits GARCH(p,q) model and returns the forecast for T+1.
+    Fits GARCH(p,q) model and returns forecasts for T+1 and T+1..T+5.
     Arch models optimize better when data is scaled (e.g., returns * 100).
+    
+    Returns:
+        res: fitted ARCHModelResult
+        annualized_vol_1d: annualized 1-day ahead vol (decimal)
+        annualized_vol_5d: annualized 5-day cumulative vol (decimal)
     """
     logger.info(f"Fitting GARCH({p},{q}) model (Distribution: {dist})...")
     
@@ -80,23 +85,28 @@ def fit_garch_and_forecast(returns: pd.Series, p: int = 1, q: int = 1, dist: Lit
     res = am.fit(disp="off", update_freq=0)
     logger.info(f"Model fitted. AIC: {res.aic:.2f}, BIC: {res.bic:.2f}")
     
-    # Forecast 1 step ahead (for day T+1)
-    forecasts = res.forecast(horizon=1, align="origin")
-    
-    # Get the variance forecast for the last day
-    # res.forecast() returns a DataFrame where the last row contains the next step forecast
-    next_day_var_scaled = forecasts.variance.iloc[-1, 0]
-    
-    # De-scale variance (divide by 100^2)
+    # --- 1-day forecast ---
+    forecasts_1d = res.forecast(horizon=1, align="origin")
+    next_day_var_scaled = forecasts_1d.variance.iloc[-1, 0]
+    # De-scale variance (divide by 100^2 because we scaled returns by 100)
     next_day_var = next_day_var_scaled / 10000.0
-    
-    # Convert daily variance to daily vol, then annualize
     daily_vol = np.sqrt(next_day_var)
-    annualized_vol = daily_vol * np.sqrt(252)
+    annualized_vol_1d = daily_vol * np.sqrt(252)
     
-    logger.info(f"T+1 Forecast -> Daily Vol: {daily_vol*100:.2f}%, Annualized Vol: {annualized_vol*100:.2f}%")
+    # --- 5-day forecast ---
+    # horizon=5 gives variance forecasts for each of the next 5 days.
+    # Cumulative 5-day vol = sqrt(sum of 5 daily variances), annualized
+    # via sqrt(252/5) to express as annualized rate over a 5-day holding period.
+    forecasts_5d = res.forecast(horizon=5, align="origin")
+    five_day_vars_scaled = forecasts_5d.variance.iloc[-1, :].values  # 5 values
+    five_day_vars = five_day_vars_scaled / 10000.0
+    cumulative_5d_vol = np.sqrt(np.sum(five_day_vars))
+    annualized_vol_5d = cumulative_5d_vol * np.sqrt(252.0 / 5.0)
     
-    return res, annualized_vol
+    logger.info(f"T+1 Forecast -> Daily Vol: {daily_vol*100:.2f}%, Annualized Vol: {annualized_vol_1d*100:.2f}%")
+    logger.info(f"T+5 Forecast -> Cumulative 5d Vol: {cumulative_5d_vol*100:.2f}%, Annualized: {annualized_vol_5d*100:.2f}%")
+    
+    return res, annualized_vol_1d, annualized_vol_5d
 
 
 # ============================================================
@@ -112,7 +122,7 @@ def main() -> None:
     logger.info(f"Loaded {len(returns)} days of log returns for GARCH.")
 
     # 2. Fit & Forecast
-    model_result, forecast_annual_vol = fit_garch_and_forecast(
+    model_result, forecast_annual_vol_1d, forecast_annual_vol_5d = fit_garch_and_forecast(
         returns, 
         p=cfg.GARCH_P, 
         q=cfg.GARCH_Q, 
@@ -125,11 +135,16 @@ def main() -> None:
         pickle.dump(model_result, f)
     logger.info(f"Saved GARCH model result to {model_path.name}")
     
-    # Save Forecast to a simple text file so Phase 4 can read it easily
-    # (Though Phase 4 will just call this function or re-run)
+    # Save Forecast (both 1d and 5d) — consumed by generate_insights.py
+    import json
     forecast_path = cfg.DATA_DIR / "features" / "garch_forecast.json"
-    pd.Series({"garch_1d_forecast_pct": float(forecast_annual_vol)}).to_json(forecast_path)
-    logger.info(f"Saved 1D forecast to {forecast_path.name}")
+    forecast_data = {
+        "garch_1d_forecast_pct": float(forecast_annual_vol_1d),
+        "garch_5d_forecast_pct": float(forecast_annual_vol_5d),
+    }
+    with open(forecast_path, "w") as f:
+        json.dump(forecast_data, f, indent=2)
+    logger.info(f"Saved 1d + 5d forecast to {forecast_path.name}")
 
     logger.info("Phase 3 complete. ✓")
 

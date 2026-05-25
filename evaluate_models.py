@@ -59,24 +59,25 @@ def evaluate_xgboost():
     y = full_df["actual_fwd_5d"]
     
     # Purged CV (Embargo): gap=5 ensures 0 overlap between train target (T to T+5) and test features (T+6)
-    tscv = TimeSeriesSplit(n_splits=5, gap=5)
-    oof_preds = np.zeros(len(full_df))
-    oof_indices = []
+    # 70/30 Chronological Split with 5-day Embargo Gap
+    dates = full_df.index.unique().sort_values()
+    split_idx = int(len(dates) * 0.70)
     
-    for train_idx, test_idx in tscv.split(X):
-        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+    train_end_date = dates[split_idx]
+    # +5 days to prevent overlapping return leakage
+    test_start_date = dates[min(split_idx + 5, len(dates) - 1)] 
+    
+    X_train = full_df.loc[full_df.index <= train_end_date][feature_cols]
+    y_train = full_df.loc[full_df.index <= train_end_date]["actual_fwd_5d"]
+    
+    X_test = full_df.loc[full_df.index >= test_start_date][feature_cols]
+    y_test = full_df.loc[full_df.index >= test_start_date]["actual_fwd_5d"]
+    
+    model.fit(X_train, y_train, verbose=False)
+    preds = model.predict(X_test)
         
-        model.fit(X_train, y_train, verbose=False)
-        preds = model.predict(X_test)
-        
-        # Store out-of-sample predictions
-        oof_preds[test_idx] = preds
-        oof_indices.extend(test_idx)
-        
-    # Filter full_df to only rows that were part of a test set (out-of-sample)
-    oof_df = full_df.iloc[oof_indices].copy()
-    oof_df["pred_fwd_5d"] = oof_preds[oof_indices]
+    oof_df = full_df.loc[full_df.index >= test_start_date].copy()
+    oof_df["pred_fwd_5d"] = preds
     
     # 1. Rank Correlation (Spearman) on Out-Of-Sample data
     corr, p_value = spearmanr(oof_df["pred_fwd_5d"], oof_df["actual_fwd_5d"])

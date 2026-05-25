@@ -95,6 +95,18 @@ def generate_json() -> None:
     spy_regimes = pd.read_csv(features_dir / "SPY_regimes.csv", index_col="date", parse_dates=True)
     final_regime = spy_regimes["regime"].iloc[-1]
 
+    # Compute the actual persistence streak: how many consecutive bars the
+    # current filtered regime has been held. The schema says persistence_bars
+    # is "how many consecutive bars in this regime" — NOT the threshold.
+    regime_vals = spy_regimes["regime"].values
+    streak = 1
+    for i in range(len(regime_vals) - 2, -1, -1):
+        if regime_vals[i] == regime_vals[-1]:
+            streak += 1
+        else:
+            break
+    logger.info(f"Current regime streak: {streak} bars of '{final_regime}'")
+
     # Determine if the persistence filter is actively overriding
     persistence_active = (final_regime != raw_regime)
     if persistence_active:
@@ -131,7 +143,8 @@ def generate_json() -> None:
     with open(features_dir / "garch_forecast.json", "r") as f:
         garch_data = json.load(f)
     # Convert from decimal to percentage (0.1218 → 12.18)
-    garch_forecast_pct = round(garch_data["garch_1d_forecast_pct"] * 100, 2)
+    garch_1d_pct = round(garch_data["garch_1d_forecast_pct"] * 100, 2)
+    garch_5d_pct = round(garch_data["garch_5d_forecast_pct"] * 100, 2)
 
     # VIX Term Structure (VIX vs VIX3M proxy)
     vix_raw = pd.read_csv(cfg.DATA_DIR / "raw" / "VIX_raw.csv", index_col="date", parse_dates=True)
@@ -148,18 +161,29 @@ def generate_json() -> None:
     with open(features_dir / "universe_ranking.json", "r") as f:
         ranking_data = json.load(f)
         
-    top_3 = ranking_data["top_3_sectors"]
-    top_3_vol = {}
-    for sector in top_3:
+    # Determine the permitted trade slots based on the regime
+    deployment_info = cfg.REGIME_DEPLOYMENT_MAP[final_regime]
+    allowed_slots = int(deployment_info["trade_slots"])
+    
+    # Select dynamically based on allowed slots
+    ranked_tickers = [k for k, v in sorted(ranking_data["predictions"].items(), key=lambda x: x[1], reverse=True)]
+    top_sectors = ranked_tickers[:allowed_slots]
+    
+    top_vol = {}
+    for sector in top_sectors:
         sec_feat = pd.read_csv(features_dir / f"{sector}_features.csv", index_col="date", parse_dates=True)
         # Calculate annualized 21-day realized volatility
         rv21 = sec_feat["log_return"].iloc[-21:].std() * np.sqrt(252)
-        top_3_vol[sector] = rv21
+        top_vol[sector] = rv21
         
     # Inverse Volatility Weighting
-    inv_vol = {k: 1.0 / v for k, v in top_3_vol.items()}
+    inv_vol = {k: 1.0 / v for k, v in top_vol.items()}
     total_inv_vol = sum(inv_vol.values())
-    universe_weights = {k: round(v / total_inv_vol, 4) for k, v in inv_vol.items()}
+    
+    if total_inv_vol > 0:
+        universe_weights = {k: round(v / total_inv_vol, 4) for k, v in inv_vol.items()}
+    else:
+        universe_weights = {}
         
     with open(features_dir / "systemic_fragility.json", "r") as f:
         fragility_score = json.load(f)["systemic_fragility"]
@@ -170,16 +194,24 @@ def generate_json() -> None:
     sectors_dict = {}
     for sector in cfg.SECTOR_TICKERS:
         sec_feat = pd.read_csv(features_dir / f"{sector}_features.csv", index_col="date", parse_dates=True)
+        sec_feat = sec_feat.sort_index()
         sec_last = sec_feat.iloc[-1]
 
         sma50 = sec_last["sma_dist_50"]
         sma200 = sec_last["sma_dist_200"]
 
-        # Sector Regime Heuristic
-        if sma50 > 0 and sma200 > 0:
+        # 10-day momentum: catches fast-moving sectors that SMA alone misses
+        # (aligns with cloud regime.py which uses 10-day return + 50-SMA)
+        ret_10d = (sec_feat["close"].iloc[-1] / sec_feat["close"].iloc[-11]) - 1
+
+        # Sector Regime Heuristic (SMA + Momentum)
+        if sma50 > 0 and sma200 > 0 and ret_10d > 0:
             sec_regime = "Trend"
         elif sma50 < 0 and sma200 < 0:
             sec_regime = "Bear"
+        elif ret_10d > 0 and sma50 > 0:
+            # Positive momentum + above 50-SMA but not yet above 200-SMA
+            sec_regime = "Choppy"
         else:
             sec_regime = "Choppy"
 
@@ -188,12 +220,11 @@ def generate_json() -> None:
 
         sectors_dict[sector] = {
             "regime": sec_regime,
-            "xgb_fwd_return_pred": round(xgb_pred, 4)
+            "score": round(xgb_pred, 4)
         }
 
     # Build JSON (The Handshake Contract)
     # ----------------------------------------------------------------
-    deployment_info = cfg.REGIME_DEPLOYMENT_MAP[final_regime]
 
     insights = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -201,16 +232,17 @@ def generate_json() -> None:
         "market": {
             "regime": final_regime,
             "confidence": round(raw_confidence, 4),
-            "persistence_bars": cfg.REGIME_PERSISTENCE_BARS,
+            "persistence_bars": streak,  # Runtime-measured streak, NOT the threshold
             "breadth_divergence": breadth_divergence,
             "systemic_fragility": fragility_score,
             "deployment_target": deployment_info["deployment_target"],
             "trade_slots": deployment_info["trade_slots"]
         },
-        "universe_ranking": ranking_data["top_3_sectors"],
+        "universe_ranking": [{"symbol": k, "ml_score": round(v, 4)} for k, v in sorted(ranking_data["predictions"].items(), key=lambda x: x[1], reverse=True)],
         "universe_weights": universe_weights,
         "volatility": {
-            "garch_1d_forecast_pct": garch_forecast_pct,
+            "garch_1d_forecast_pct": garch_1d_pct,
+            "garch_5d_forecast_pct": garch_5d_pct,
             "vix_implied_term_structure": term_structure
         },
         "sectors": sectors_dict
@@ -221,6 +253,29 @@ def generate_json() -> None:
         json.dump(insights, f, indent=2)
 
     logger.info(f"Generated {cfg.INSIGHTS_PATH.name}")
+    
+    # Save History (JSONL) — Idempotent
+    history_path = cfg.INSIGHTS_PATH.parent / "history.jsonl"
+    history_lines = []
+    
+    if history_path.exists():
+        with open(history_path, "r") as f:
+            for line in f:
+                if not line.strip(): continue
+                try:
+                    data = json.loads(line)
+                    # Keep if from a previous day. This ensures multiple manual runs
+                    # on the same day overwrite instead of duplicating.
+                    if data.get("generated_at", "").split("T")[0] != insights["generated_at"].split("T")[0]:
+                        history_lines.append(line.strip())
+                except:
+                    pass
+                    
+    history_lines.append(json.dumps(insights))
+    with open(history_path, "w") as f:
+        f.write("\n".join(history_lines) + "\n")
+        
+    logger.info(f"Updated {history_path.name}")
     print(json.dumps(insights, indent=2))
 
 

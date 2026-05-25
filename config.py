@@ -107,3 +107,12 @@ REGIME_DEPLOYMENT_MAP = {
 # ============================================================
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
+
+# Cross-repo delivery: push ml-insights.json to the Trading Bot repo
+# so the cloud consumer can read it at repo root.
+# TODO: Replace with actual repo URL once confirmed.
+TRADING_BOT_REPO = "git@github.com:cucuradu/trading-bot.git"
+TRADING_BOT_INSIGHTS_DEST = "docs/ml-insights.json"  # path within Trading Bot repo
+TRADING_BOT_HISTORY_DEST = "docs/history.jsonl"
+GIT_BOT_NAME = "ml-pipeline-bot"
+GIT_BOT_EMAIL = "bot@cucuradu.local"

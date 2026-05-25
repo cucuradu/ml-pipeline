@@ -99,6 +99,8 @@ def train_xgboost(train_df: pd.DataFrame, feature_cols: list[str]):
         "learning_rate": 0.05,
         "subsample": 0.8,
         "colsample_bytree": 0.8,
+        "reg_alpha": 0.5,
+        "reg_lambda": 1.0,
         "random_state": 42,
         "n_jobs": -1
     }
@@ -113,25 +115,31 @@ def train_xgboost(train_df: pd.DataFrame, feature_cols: list[str]):
                 "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
                 "subsample": trial.suggest_float("subsample", 0.5, 1.0),
                 "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+                "reg_alpha": trial.suggest_float("reg_alpha", 0.1, 2.0),
+                "reg_lambda": trial.suggest_float("reg_lambda", 0.1, 2.0),
                 "random_state": 42,
                 "n_jobs": -1
             }
             
-            tscv = TimeSeriesSplit(n_splits=5, gap=5)
-            cv_scores = []
+            dates = train_df.index.unique().sort_values()
+            split_idx = int(len(dates) * 0.70)
+            
+            train_end_date = dates[split_idx]
+            test_start_date = dates[min(split_idx + 5, len(dates) - 1)] 
+            
+            X_train_cv = train_df.loc[train_df.index <= train_end_date][feature_cols]
+            y_train_cv = train_df.loc[train_df.index <= train_end_date]["fwd_return_5d"]
+            
+            X_test_cv = train_df.loc[train_df.index >= test_start_date][feature_cols]
+            y_test_cv = train_df.loc[train_df.index >= test_start_date]["fwd_return_5d"]
             
             model = xgb.XGBRegressor(**params)
             
-            for train_idx, test_idx in tscv.split(X):
-                X_train_cv, X_test_cv = X.iloc[train_idx], X.iloc[test_idx]
-                y_train_cv, y_test_cv = y.iloc[train_idx], y.iloc[test_idx]
+            model.fit(X_train_cv, y_train_cv, verbose=False)
+            preds = model.predict(X_test_cv)
+            rmse = np.sqrt(mean_squared_error(y_test_cv, preds))
                 
-                model.fit(X_train_cv, y_train_cv, verbose=False)
-                preds = model.predict(X_test_cv)
-                rmse = np.sqrt(mean_squared_error(y_test_cv, preds))
-                cv_scores.append(rmse)
-                
-            return np.mean(cv_scores)
+            return rmse
             
         study = optuna.create_study(direction="minimize")
         # Run 20 trials to keep pipeline reasonably fast
@@ -142,22 +150,24 @@ def train_xgboost(train_df: pd.DataFrame, feature_cols: list[str]):
         
         best_params.update(study.best_params)
     else:
-        # 1. Walk-Forward Cross Validation with default params
-        tscv = TimeSeriesSplit(n_splits=5, gap=5)
-        cv_scores = []
-        model = xgb.XGBRegressor(**best_params)
+        dates = train_df.index.unique().sort_values()
+        split_idx = int(len(dates) * 0.70)
         
-        for train_idx, test_idx in tscv.split(X):
-            X_train_cv, X_test_cv = X.iloc[train_idx], X.iloc[test_idx]
-            y_train_cv, y_test_cv = y.iloc[train_idx], y.iloc[test_idx]
+        train_end_date = dates[split_idx]
+        test_start_date = dates[min(split_idx + 5, len(dates) - 1)] 
+        
+        X_train_cv = train_df.loc[train_df.index <= train_end_date][feature_cols]
+        y_train_cv = train_df.loc[train_df.index <= train_end_date]["fwd_return_5d"]
+        
+        X_test_cv = train_df.loc[train_df.index >= test_start_date][feature_cols]
+        y_test_cv = train_df.loc[train_df.index >= test_start_date]["fwd_return_5d"]
+        
+        model = xgb.XGBRegressor(**best_params)
+        model.fit(X_train_cv, y_train_cv, verbose=False)
+        preds = model.predict(X_test_cv)
+        rmse = np.sqrt(mean_squared_error(y_test_cv, preds))
             
-            model.fit(X_train_cv, y_train_cv, verbose=False)
-            preds = model.predict(X_test_cv)
-            rmse = np.sqrt(mean_squared_error(y_test_cv, preds))
-            cv_scores.append(rmse)
-            
-        avg_rmse = np.mean(cv_scores)
-        logger.info(f"Walk-Forward CV RMSE (5 splits): {avg_rmse:.4f}")
+        logger.info(f"70/30 Split RMSE: {rmse:.4f}")
     
     # 2. Final Retrain on 100% of data
     logger.info("Retraining final model on 100% of historical data with best params...")

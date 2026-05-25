@@ -1,73 +1,113 @@
 {
-  "generated_at": "2026-05-23T19:35:08Z",
+  "generated_at": "2026-05-25T09:43:35Z",
   "model_version": "hmm-garch-v1.0",
   "market": {
     "regime": "Caution",
     "confidence": 1.0,
-    "persistence_bars": 3,
+    "persistence_bars": 32,
     "breadth_divergence": false,
     "systemic_fragility": 0.01818181818181818,
     "deployment_target": 0.5,
     "trade_slots": 1
   },
   "universe_ranking": [
-    "XLB",
-    "XLU",
-    "XLF"
+    {
+      "symbol": "XLB",
+      "ml_score": 0.0039
+    },
+    {
+      "symbol": "XLV",
+      "ml_score": 0.0017
+    },
+    {
+      "symbol": "XLF",
+      "ml_score": 0.0016
+    },
+    {
+      "symbol": "XLU",
+      "ml_score": 0.0015
+    },
+    {
+      "symbol": "XLRE",
+      "ml_score": 0.0015
+    },
+    {
+      "symbol": "XLY",
+      "ml_score": 0.0014
+    },
+    {
+      "symbol": "XLC",
+      "ml_score": 0.0012
+    },
+    {
+      "symbol": "XLP",
+      "ml_score": 0.0012
+    },
+    {
+      "symbol": "XLI",
+      "ml_score": 0.0012
+    },
+    {
+      "symbol": "XLK",
+      "ml_score": 0.0011
+    },
+    {
+      "symbol": "XLE",
+      "ml_score": 0.0005
+    }
   ],
   "universe_weights": {
-    "XLB": 0.253,
-    "XLU": 0.2917,
-    "XLF": 0.4553
+    "XLB": 1.0
   },
   "volatility": {
     "garch_1d_forecast_pct": 12.01,
+    "garch_5d_forecast_pct": 12.28,
     "vix_implied_term_structure": "contango"
   },
   "sectors": {
     "XLK": {
       "regime": "Trend",
-      "xgb_fwd_return_pred": 0.0018
+      "score": 0.0011
     },
     "XLF": {
       "regime": "Choppy",
-      "xgb_fwd_return_pred": 0.002
+      "score": 0.0016
     },
     "XLV": {
       "regime": "Trend",
-      "xgb_fwd_return_pred": 0.0019
+      "score": 0.0017
     },
     "XLE": {
       "regime": "Trend",
-      "xgb_fwd_return_pred": 0.0019
+      "score": 0.0005
     },
     "XLI": {
-      "regime": "Trend",
-      "xgb_fwd_return_pred": 0.0018
+      "regime": "Choppy",
+      "score": 0.0012
     },
     "XLY": {
-      "regime": "Trend",
-      "xgb_fwd_return_pred": 0.0019
+      "regime": "Choppy",
+      "score": 0.0014
     },
     "XLP": {
       "regime": "Trend",
-      "xgb_fwd_return_pred": 0.0018
+      "score": 0.0012
     },
     "XLU": {
       "regime": "Choppy",
-      "xgb_fwd_return_pred": 0.0022
+      "score": 0.0015
     },
     "XLB": {
       "regime": "Choppy",
-      "xgb_fwd_return_pred": 0.0026
+      "score": 0.0039
     },
     "XLRE": {
       "regime": "Trend",
-      "xgb_fwd_return_pred": 0.0018
+      "score": 0.0015
     },
     "XLC": {
-      "regime": "Trend",
-      "xgb_fwd_return_pred": 0.0019
+      "regime": "Choppy",
+      "score": 0.0012
     }
   }
 }

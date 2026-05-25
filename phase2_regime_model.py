@@ -19,6 +19,7 @@ Outputs:
 import logging
 import sys
 import pickle
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -164,19 +165,46 @@ def apply_persistence_filter(raw_regimes: pd.Series, persistence_bars: int) -> p
 # Main
 # ============================================================
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Phase 2: Regime Classifier (HMM)")
+    parser.add_argument(
+        "--retrain",
+        action="store_true",
+        help="Force re-derivation of cluster→regime label mapping. "
+             "Without this flag, daily runs reuse the frozen mapping from the last train.",
+    )
+    args = parser.parse_args()
+
     logger.info("=" * 50)
     logger.info("PHASE 2 — Regime Classifier (HMM)")
     logger.info("=" * 50)
+
+    model_path = cfg.MODELS_DIR / "gmm_pipeline.pkl"
 
     # 1. Load Data
     df = load_and_prepare_data(cfg.DATA_DIR / "features")
     feature_cols = [c for c in df.columns if c not in ("ticker", "close")]
 
-    # 2. Train Model
-    model_dict = train_hmm(df, feature_cols, n_components=cfg.N_REGIMES)
+    # 2. Check for frozen mapping (stability guard)
+    #    If a trained model already exists and --retrain is NOT set,
+    #    reuse the existing model + frozen mapping. This prevents phantom
+    #    regime label swaps from minor cluster reordering between runs.
+    if model_path.exists() and not args.retrain:
+        logger.info("Loading frozen model + mapping from previous train (use --retrain to re-derive).")
+        with open(model_path, "rb") as f:
+            saved_data = pickle.load(f)
+        model_dict = saved_data["pipeline"]
+        state_mapping = saved_data["mapping"]
+        logger.info(f"Frozen mapping: {state_mapping}")
+    else:
+        if args.retrain:
+            logger.warning("--retrain flag set: re-deriving cluster→regime mapping from scratch.")
+            logger.warning("Verify regime labels haven't swapped in the output.")
 
-    # 3. Map States
-    state_mapping = map_states_to_regimes(model_dict, df, feature_cols)
+        # 2b. Train Model
+        model_dict = train_hmm(df, feature_cols, n_components=cfg.N_REGIMES)
+
+        # 3. Map States
+        state_mapping = map_states_to_regimes(model_dict, df, feature_cols)
 
     # 4. Predict & Map
     X_scaled = model_dict["scaler"].transform(df[feature_cols].values)
@@ -216,10 +244,8 @@ def main() -> None:
     )
     logger.info("\n" + tm_df.round(4).to_string())
 
-    # Save Model
-    model_path = cfg.MODELS_DIR / "gmm_pipeline.pkl" # Keep filename for compatibility with generate_insights.py
+    # Save Model (always — even on frozen runs, we re-save to update predictions)
     with open(model_path, "wb") as f:
-        # Save scaler and hmm separately since pipeline isn't used
         pickle.dump({"pipeline": model_dict, "mapping": state_mapping}, f)
     logger.info(f"Saved HMM model to {model_path.name}")
 
