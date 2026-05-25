@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Phase 6 — Graph-Based Market Structure (GNN / Topology)
-=======================================================
-Treats the 11 sector ETFs as nodes in a graph. Connects them with edges
-based on their rolling 30-day correlations.
+Phase 6 — Systemic Fragility (PCA Absorption Ratio)
+===================================================
+Treats the 11 sector ETFs as a highly dimensional system and measures how
+tightly coupled they are via Principal Component Analysis (PCA).
 
 Output:
-  • `systemic_fragility`: A score from 0.0 to 1.0. 
-    High score means the entire market is tightly coupled (fragile).
-    Low score means sectors are moving independently (robust).
+  • `systemic_fragility`: A score from 0.0 to 1.0 (Variance explained by PC1).
+    High score means the entire market is tightly coupled (fragile monolith).
+    Low score means sectors are moving independently (robust rotation).
 """
 
 import logging
@@ -53,41 +53,37 @@ def build_returns_matrix(features_dir: Path, window: int = 30) -> pd.DataFrame:
     return pd.DataFrame(series_list)
 
 
-def calculate_fragility(returns_matrix: pd.DataFrame, threshold: float = 0.7) -> float:
+def calculate_fragility(returns_matrix: pd.DataFrame) -> float:
     """
-    Calculates the Systemic Fragility score using Graph Topology.
-    1. Computes the Pearson correlation matrix.
-    2. Builds an adjacency matrix (Edge = 1 if correlation > threshold).
-    3. Calculates graph density (actual edges / possible edges).
+    Calculates the Systemic Fragility score using PCA Absorption Ratio.
+    1. Computes the Pearson correlation matrix of sector returns.
+    2. Extracts the eigenvalues using PCA.
+    3. The fragility score is the percentage of variance explained by the 1st Principal Component.
+       If PC1 explains the vast majority of variance, the market is moving as a highly correlated monolith.
     """
     # 1. Correlation Matrix
     corr = returns_matrix.corr()
     
-    # 2. Graph Construction
-    G = nx.Graph()
-    sectors = corr.columns
-    G.add_nodes_from(sectors)
+    # 2. PCA Absorption Ratio
+    # eigh calculates eigenvalues for symmetric matrices
+    eigenvalues, _ = np.linalg.eigh(corr)
     
-    for i in range(len(sectors)):
-        for j in range(i + 1, len(sectors)):
-            weight = corr.iloc[i, j]
-            # We look at highly correlated pairs. 
-            if weight > threshold:
-                G.add_edge(sectors[i], sectors[j], weight=weight)
-                
-    # 3. Graph Density (The Fragility Score)
-    # Density is 0 if no edges exist, and 1 if it's a complete graph.
-    fragility = nx.density(G)
+    # The largest eigenvalue represents the variance captured by the 1st Principal Component
+    max_eigenvalue = np.max(eigenvalues)
+    sum_eigenvalues = np.sum(eigenvalues)
     
-    logger.info(f"Market Graph Nodes: {G.number_of_nodes()}, Edges: {G.number_of_edges()}")
-    logger.info(f"Systemic Fragility Score (Density): {fragility:.4f}")
+    fragility = max_eigenvalue / sum_eigenvalues
+    
+    logger.info(f"Market Sectors Analyzed: {len(corr.columns)}")
+    logger.info(f"Top Eigenvalue (PC1 Variance): {max_eigenvalue:.4f} / {sum_eigenvalues:.4f}")
+    logger.info(f"Systemic Fragility Score (Absorption Ratio): {fragility:.4f}")
     
     return float(fragility)
 
 
 def main():
     logger.info("=" * 50)
-    logger.info("PHASE 6 — Graph-Based Market Structure")
+    logger.info("PHASE 6 — Systemic Fragility (PCA Absorption)")
     logger.info("=" * 50)
     
     features_dir = cfg.DATA_DIR / "features"
@@ -97,7 +93,7 @@ def main():
         logger.error("No sector data found.")
         sys.exit(1)
         
-    fragility = calculate_fragility(returns_matrix, threshold=0.7)
+    fragility = calculate_fragility(returns_matrix)
     
     out_path = features_dir / "systemic_fragility.json"
     with open(out_path, "w") as f:
