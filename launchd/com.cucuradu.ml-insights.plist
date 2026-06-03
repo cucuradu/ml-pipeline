@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily ML pipeline → publish ml-insights.json to the trading-bot repo.
+
+  Install:
+    cp launchd/com.cucuradu.ml-insights.plist ~/Library/LaunchAgents/
+    launchctl load   ~/Library/LaunchAgents/com.cucuradu.ml-insights.plist
+  Run once now (test):
+    launchctl start com.cucuradu.ml-insights
+  Inspect / remove:
+    launchctl list | grep ml-insights
+    launchctl unload ~/Library/LaunchAgents/com.cucuradu.ml-insights.plist
+
+  Runs 7 days/week at 06:30 local. If the Mac is asleep at 06:30, launchd runs
+  the job on the next wake. Markets-closed days simply re-emit the last inference
+  so the bot's 24h freshness check never forces a fallback.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cucuradu.ml-insights</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/raducucu/Documents/Python/Ml_trade/run_pipeline.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/raducucu/Documents/Python/Ml_trade/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/raducucu/Documents/Python/Ml_trade/logs/launchd.err.log</string>
+</dict>
+</plist>

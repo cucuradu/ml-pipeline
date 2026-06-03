@@ -1,14 +1,27 @@
 #!/usr/bin/env python3
 """
-Phase 6 — Graph-Based Market Structure (GNN / Topology)
-=======================================================
-Treats the 11 sector ETFs as nodes in a graph. Connects them with edges
-based on their rolling 30-day correlations.
+Phase 6 — Systemic Fragility (PCA Absorption Ratio)
+===================================================
+Replaces the earlier "graph density" heuristic, which was mislabeled a GNN and
+produced an implausible 0.018 (the consumer's #1 flagged anomaly, followup S3/P1).
 
-Output:
-  • `systemic_fragility`: A score from 0.0 to 1.0. 
-    High score means the entire market is tightly coupled (fragile).
-    Low score means sectors are moving independently (robust).
+The Absorption Ratio (Kritzman, Li, Page & Rigobon 2010) is the share of total
+cross-sector variance explained by the first principal component:
+
+    AR = λ_max / Σ λ_i
+
+over the correlation matrix of recent sector returns. Because trace(corr) = n,
+this is λ_max / n. A high AR means one factor dominates — sectors have collapsed
+into a single fragile bloc where a shock cascades everywhere. Low AR means
+healthy, independent rotation.
+
+Empirical bands (matches what the consumer documented):
+  • ~0.40–0.65  normal, diversified market
+  • > 0.80      extreme structural correlation — fragile
+
+Output: `systemic_fragility` ∈ [0,1] in data/features/systemic_fragility.json.
+The window is 60 trading days (followup S3 suspected the old 30d window was too
+short to estimate an 11×11 correlation matrix stably).
 """
 
 import logging
@@ -18,13 +31,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import networkx as nx
 
 import config as cfg
 
-# ============================================================
-# Logging
-# ============================================================
+ABSORPTION_WINDOW = 60  # trading days; ≥ assets² stability for an 11×11 corr matrix
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -36,75 +47,71 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def build_returns_matrix(features_dir: Path, window: int = 30) -> pd.DataFrame:
-    """Builds a DataFrame of daily log returns for all sectors over the last N days."""
-    series_list = {}
-    
+def build_returns_matrix(features_dir: Path, window: int) -> pd.DataFrame:
+    """Daily log returns for the 11 sectors over the last `window` days, aligned.
+
+    The old implementation tail-sliced each series independently, which could
+    misalign dates and silently produce a near-identity correlation matrix
+    (the likely root cause of the 0.018 bug). We align on the shared DatetimeIndex
+    BEFORE slicing so every column covers the same trading days.
+    """
+    series = {}
     for sector in cfg.SECTOR_TICKERS:
         csv_path = features_dir / f"{sector}_features.csv"
         if not csv_path.exists():
+            logger.warning(f"  missing {csv_path.name}; excluded from fragility")
             continue
-            
-        df = pd.read_csv(csv_path, index_col="date", parse_dates=True)
-        # Get the last `window` rows
-        ret = df["log_return"].dropna().tail(window)
-        series_list[sector] = ret
-        
-    return pd.DataFrame(series_list)
+        df = pd.read_csv(csv_path, index_col="date", parse_dates=True).sort_index()
+        series[sector] = df["log_return"]
+
+    matrix = pd.DataFrame(series).dropna(how="any")
+    return matrix.tail(window)
 
 
-def calculate_fragility(returns_matrix: pd.DataFrame, threshold: float = 0.7) -> float:
-    """
-    Calculates the Systemic Fragility score using Graph Topology.
-    1. Computes the Pearson correlation matrix.
-    2. Builds an adjacency matrix (Edge = 1 if correlation > threshold).
-    3. Calculates graph density (actual edges / possible edges).
-    """
-    # 1. Correlation Matrix
-    corr = returns_matrix.corr()
-    
-    # 2. Graph Construction
-    G = nx.Graph()
-    sectors = corr.columns
-    G.add_nodes_from(sectors)
-    
-    for i in range(len(sectors)):
-        for j in range(i + 1, len(sectors)):
-            weight = corr.iloc[i, j]
-            # We look at highly correlated pairs. 
-            if weight > threshold:
-                G.add_edge(sectors[i], sectors[j], weight=weight)
-                
-    # 3. Graph Density (The Fragility Score)
-    # Density is 0 if no edges exist, and 1 if it's a complete graph.
-    fragility = nx.density(G)
-    
-    logger.info(f"Market Graph Nodes: {G.number_of_nodes()}, Edges: {G.number_of_edges()}")
-    logger.info(f"Systemic Fragility Score (Density): {fragility:.4f}")
-    
-    return float(fragility)
+def absorption_ratio(returns_matrix: pd.DataFrame) -> float:
+    """λ_max / Σλ of the return correlation matrix. ∈ (0,1]."""
+    corr = returns_matrix.corr().to_numpy()
+    # Symmetric PSD matrix → real non-negative eigenvalues.
+    eigvals = np.linalg.eigvalsh(corr)
+    eigvals = np.clip(eigvals, 0.0, None)
+    total = float(eigvals.sum())
+    if total <= 0:
+        return float("nan")
+    ar = float(eigvals.max() / total)
+    logger.info(
+        f"Absorption Ratio: {ar:.4f} (λ_max={eigvals.max():.2f}, n={len(eigvals)}, "
+        f"window={len(returns_matrix)}d)"
+    )
+    return ar
 
 
 def main():
     logger.info("=" * 50)
-    logger.info("PHASE 6 — Graph-Based Market Structure")
+    logger.info("PHASE 6 — Systemic Fragility (PCA Absorption Ratio)")
     logger.info("=" * 50)
-    
+
     features_dir = cfg.DATA_DIR / "features"
-    returns_matrix = build_returns_matrix(features_dir, window=30)
-    
-    if returns_matrix.empty:
-        logger.error("No sector data found.")
+    returns_matrix = build_returns_matrix(features_dir, window=ABSORPTION_WINDOW)
+
+    if returns_matrix.shape[0] < 20 or returns_matrix.shape[1] < 3:
+        logger.error(
+            f"Insufficient aligned sector data ({returns_matrix.shape}); "
+            "cannot compute a stable absorption ratio."
+        )
         sys.exit(1)
-        
-    fragility = calculate_fragility(returns_matrix, threshold=0.7)
-    
+
+    fragility = absorption_ratio(returns_matrix)
+    if not np.isfinite(fragility):
+        logger.error("Degenerate correlation matrix; fragility undefined.")
+        sys.exit(1)
+
     out_path = features_dir / "systemic_fragility.json"
     with open(out_path, "w") as f:
-        json.dump({"systemic_fragility": fragility}, f)
-        
+        json.dump({"systemic_fragility": round(fragility, 4)}, f)
+
     logger.info(f"Saved fragility score to {out_path.name}")
     logger.info("Phase 6 complete. ✓")
+
 
 if __name__ == "__main__":
     main()

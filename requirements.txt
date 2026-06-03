@@ -15,10 +15,15 @@ scipy>=1.13
 scikit-learn>=1.5           # GMM clustering, preprocessing, metrics
 hmmlearn>=0.3               # Hidden Markov Models (alternative to GMM)
 xgboost>=2.0                # Phase 5 Universe Ranking
+optuna>=3.6                 # Phase 5 walk-forward hyperparameter tuning
 ta>=0.11                    # Technical analysis indicators (optional helpers)
 
 # --- Volatility Modeling ---
 arch>=7.0                   # GARCH(1,1) volatility forecasting
+
+# --- Macro / Credit Data ---
+# FRED is fetched keyless via its fredgraph CSV endpoint (pandas.read_csv on a
+# URL) in phase7_macro.py — no extra dependency required.
 
 # --- Visualization & Debugging ---
 matplotlib>=3.9
@@ -29,12 +34,16 @@ pytz>=2024.1                # Timezone-aware datetime handling
 python-dateutil>=2.9
 requests>=2.32              # For any HTTP needs (VIX term structure, etc.)
 
+# --- Graph Topology (Phase 6) ---
+networkx>=3.0               # Sector-correlation graph density / fragility
+
 # --- GPU Acceleration (PyTorch — for future deep-learning phases) ---
---extra-index-url https://download.pytorch.org/whl/cu124
-torch>=2.4
-torchvision>=0.19
-torch_geometric>=2.5
-networkx>=3.0               # For GNN topology construction
+# CUDA-only; not currently imported by any phase. Re-enable on the Linux/RTX host
+# when a real GNN phase lands. Kept commented so the pipeline installs cross-platform.
+# --extra-index-url https://download.pytorch.org/whl/cu124
+# torch>=2.4
+# torchvision>=0.19
+# torch_geometric>=2.5
 
 # --- Automation & Scheduling ---
 # cron is system-level (no pip package needed)
