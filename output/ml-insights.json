@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-03T23:17:54Z",
+  "generated_at": "2026-06-04T07:47:46Z",
   "model_version": "hmm-garch-v2.0",
   "schema_version": "1.1",
   "market": {
@@ -14,78 +14,78 @@
   "universe_ranking": [
     {
       "symbol": "NOW",
-      "ml_score": 0.083234,
-      "forward_return_pct": 8.3234
+      "ml_score": 0.090135,
+      "forward_return_pct": 9.0135
     },
     {
       "symbol": "AMD",
-      "ml_score": 0.05793,
-      "forward_return_pct": 5.793
+      "ml_score": 0.055347,
+      "forward_return_pct": 5.5347
     },
     {
       "symbol": "MU",
-      "ml_score": 0.045997,
-      "forward_return_pct": 4.5997
+      "ml_score": 0.046955,
+      "forward_return_pct": 4.6955
     },
     {
       "symbol": "INTU",
-      "ml_score": 0.038938,
-      "forward_return_pct": 3.8938
-    },
-    {
-      "symbol": "MSFT",
-      "ml_score": 0.020986,
-      "forward_return_pct": 2.0986
+      "ml_score": 0.038609,
+      "forward_return_pct": 3.8609
     },
     {
       "symbol": "ADBE",
-      "ml_score": 0.017096,
-      "forward_return_pct": 1.7096
+      "ml_score": 0.019689,
+      "forward_return_pct": 1.9689
+    },
+    {
+      "symbol": "MSFT",
+      "ml_score": 0.019223,
+      "forward_return_pct": 1.9223
     },
     {
       "symbol": "CRM",
-      "ml_score": 0.016204,
-      "forward_return_pct": 1.6204
+      "ml_score": 0.016934,
+      "forward_return_pct": 1.6934
     },
     {
       "symbol": "SMH",
-      "ml_score": 0.013152,
-      "forward_return_pct": 1.3152
-    },
-    {
-      "symbol": "AVGO",
-      "ml_score": 0.006935,
-      "forward_return_pct": 0.6935
-    },
-    {
-      "symbol": "AMZN",
-      "ml_score": 0.006651,
-      "forward_return_pct": 0.6651
+      "ml_score": 0.013149,
+      "forward_return_pct": 1.3149
     },
     {
       "symbol": "CAT",
-      "ml_score": 0.00663,
-      "forward_return_pct": 0.663
+      "ml_score": 0.007747,
+      "forward_return_pct": 0.7747
     },
     {
-      "symbol": "GOOGL",
-      "ml_score": 0.006105,
-      "forward_return_pct": 0.6105
-    },
-    {
-      "symbol": "XLK",
-      "ml_score": 0.004499,
-      "forward_return_pct": 0.4499
+      "symbol": "AMZN",
+      "ml_score": 0.006753,
+      "forward_return_pct": 0.6753
     },
     {
       "symbol": "ORCL",
-      "ml_score": 0.004332,
-      "forward_return_pct": 0.4332
+      "ml_score": 0.006238,
+      "forward_return_pct": 0.6238
+    },
+    {
+      "symbol": "GOOGL",
+      "ml_score": 0.006057,
+      "forward_return_pct": 0.6057
+    },
+    {
+      "symbol": "AVGO",
+      "ml_score": 0.003807,
+      "forward_return_pct": 0.3807
+    },
+    {
+      "symbol": "XLK",
+      "ml_score": 0.003598,
+      "forward_return_pct": 0.3598
     },
     {
       "symbol": "LOW",
-      "ml_score": 0.002549,
-      "forward_return_pct": 0.2549
+      "ml_score": 0.003075,
+      "forward_return_pct": 0.3075
     }
   ],
   "universe_weights": {
@@ -117,63 +117,63 @@
     "reasons": []
   },
   "ranking_quality": {
-    "oof_rank_ic": 0.0132
+    "oof_rank_ic": 0.0171
   },
   "sectors": {
     "XLK": {
       "regime": "Trend",
-      "score": 0.004499,
-      "forward_return_pct": 0.4499
+      "score": 0.003598,
+      "forward_return_pct": 0.3598
     },
     "XLF": {
       "regime": "Bear",
-      "score": -0.002242,
-      "forward_return_pct": -0.2242
+      "score": -0.001956,
+      "forward_return_pct": -0.1956
     },
     "XLV": {
       "regime": "Choppy",
-      "score": -0.002054,
-      "forward_return_pct": -0.2054
+      "score": -0.001643,
+      "forward_return_pct": -0.1643
     },
     "XLE": {
       "regime": "Bear",
-      "score": -0.001589,
-      "forward_return_pct": -0.1589
+      "score": -0.00113,
+      "forward_return_pct": -0.113
     },
     "XLI": {
       "regime": "Trend",
-      "score": -0.001941,
-      "forward_return_pct": -0.1941
+      "score": -0.001712,
+      "forward_return_pct": -0.1712
     },
     "XLY": {
       "regime": "Choppy",
-      "score": -0.001892,
-      "forward_return_pct": -0.1892
+      "score": -0.001771,
+      "forward_return_pct": -0.1771
     },
     "XLP": {
       "regime": "Bear",
-      "score": -0.00201,
-      "forward_return_pct": -0.201
+      "score": -0.001784,
+      "forward_return_pct": -0.1784
     },
     "XLU": {
       "regime": "Bear",
-      "score": -0.00088,
-      "forward_return_pct": -0.088
+      "score": -0.000817,
+      "forward_return_pct": -0.0817
     },
     "XLB": {
       "regime": "Trend",
-      "score": -0.001194,
-      "forward_return_pct": -0.1194
+      "score": -0.001202,
+      "forward_return_pct": -0.1202
     },
     "XLRE": {
       "regime": "Choppy",
-      "score": -0.002039,
-      "forward_return_pct": -0.2039
+      "score": -0.001803,
+      "forward_return_pct": -0.1803
     },
     "XLC": {
       "regime": "Bear",
-      "score": -0.002223,
-      "forward_return_pct": -0.2223
+      "score": -0.001886,
+      "forward_return_pct": -0.1886
     }
   }
 }
