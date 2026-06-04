@@ -63,49 +63,56 @@ def fetch_all_tickers(
     raw_data: dict[str, pd.DataFrame] = {}
     failed: list[str] = []
 
-    for ticker in tickers:
-        logger.info(f"Fetching {ticker} ({start} → {end})...")
+    # Fetch in SMALL chunks. A single threaded yf.download of the whole 75-name
+    # universe deadlocks (observed: 38-min hang, zero output) — Yahoo throttles
+    # the large concurrent burst. Chunks of ~12 with threads=True complete in
+    # seconds each and never hang.
+    chunk_size = 12
+    chunks = [tickers[i:i + chunk_size] for i in range(0, len(tickers), chunk_size)]
+    logger.info(f"Fetching {len(tickers)} tickers in {len(chunks)} chunks ({start} → {end})...")
+
+    for ci, chunk in enumerate(chunks, 1):
+        logger.info(f"  chunk {ci}/{len(chunks)}: {chunk}")
         try:
-            df = yf.download(
-                ticker,
-                start=start,
-                end=end,
-                auto_adjust=True,   # adjusted OHLCV (splits + dividends)
-                progress=False,
+            data = yf.download(
+                chunk, start=start, end=end, auto_adjust=True,
+                progress=False, group_by="ticker", threads=True,
             )
-
-            if df.empty:
-                logger.warning(f"  ⚠ No data returned for {ticker}")
-                failed.append(ticker)
-                continue
-
-            # Flatten multi-level columns if present (yfinance quirk)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-
-            # Standardize column names to lowercase
-            df.columns = [c.lower() for c in df.columns]
-
-            # Ensure DatetimeIndex
-            df.index = pd.to_datetime(df.index)
-            df.index.name = "date"
-
-            # Use clean display name for storage and dict keys
-            display_name = cfg.TICKER_DISPLAY_NAMES.get(ticker, ticker)
-
-            # Save raw CSV
-            csv_path = save_dir / f"{display_name}_raw.csv"
-            df.to_csv(csv_path)
-            logger.info(f"  ✓ {display_name}: {len(df)} bars → {csv_path.name}")
-
-            raw_data[display_name] = df
-
         except Exception as e:
-            logger.error(f"  ✗ Failed to fetch {ticker}: {e}")
-            failed.append(ticker)
+            logger.error(f"  ✗ chunk {ci} download failed: {e}")
+            failed.extend(chunk)
+            continue
 
+        multi = isinstance(data.columns, pd.MultiIndex)
+        for ticker in chunk:
+            display_name = cfg.TICKER_DISPLAY_NAMES.get(ticker, ticker)
+            try:
+                if multi:
+                    if ticker not in data.columns.get_level_values(0):
+                        logger.warning(f"  ⚠ No data for {ticker}")
+                        failed.append(ticker)
+                        continue
+                    df = data[ticker].dropna(how="all")
+                else:
+                    df = data.dropna(how="all")  # single-ticker chunk
+
+                if df.empty:
+                    logger.warning(f"  ⚠ No data for {ticker}")
+                    failed.append(ticker)
+                    continue
+
+                df.columns = [str(c).lower() for c in df.columns]
+                df.index = pd.to_datetime(df.index)
+                df.index.name = "date"
+                df.to_csv(save_dir / f"{display_name}_raw.csv")
+                raw_data[display_name] = df
+            except Exception as e:
+                logger.error(f"  ✗ Failed to process {ticker}: {e}")
+                failed.append(ticker)
+
+    logger.info(f"Fetched {len(raw_data)}/{len(tickers)} tickers.")
     if failed:
-        logger.warning(f"Failed tickers: {failed}")
+        logger.warning(f"Failed tickers ({len(failed)}): {failed}")
 
     return raw_data
 
@@ -253,8 +260,8 @@ def engineer_all_features(
         spy_return = np.log(spy_raw["close"] / spy_raw["close"].shift(1))
 
     for ticker, df in raw_data.items():
-        # VIX / VIX3M / TNX / IRX are not tradeable — only used as feature inputs
-        if ticker in ("VIX", "VIX3M", "TNX", "IRX"):
+        # Non-tradeable context series — used as feature inputs only.
+        if ticker in ("VIX", "VIX3M", "VVIX", "TNX", "IRX"):
             logger.info(f"Skipping {ticker} feature engineering (used as input signal only).")
             continue
 

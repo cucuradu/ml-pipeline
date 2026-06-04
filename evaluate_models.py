@@ -1,203 +1,235 @@
 #!/usr/bin/env python3
 """
-Model Evaluation & Backtesting Script
-=====================================
-Evaluates the real-world predictive power of the ML models on historical data.
+Phase 8 — Profit Scoreboard
+===========================
+The gate for every model in this pipeline. A ranking is only worth shipping if
+it beats (a) SPY buy-hold and (b) the bot's own fixed-weight screener, on
+RISK-ADJUSTED return. Without this, "best model for profit" is unfalsifiable.
 
-1. XGBoost: Calculates Rank Correlation & Hit Rate for the Top 1 Sector.
-2. HMM: Compares the forward returns of SPY across different predicted regimes.
+What it does:
+  1. Rebuild the cross-sectional factor panel (Phase 5).
+  2. Generate purged walk-forward out-of-fold predictions for the ML ranker.
+  3. Build a fixed-weight "screener" score from the same factors (per-day z-scored
+     × the screener's published weights) as the baseline to beat.
+  4. Backtest each as a daily-rebalanced top-5 long book (matching the bot's 5-6
+     position cap) and report Sharpe, Sortino, max drawdown, CAGR, hit rate,
+     turnover, and rank IC — all vs SPY buy-hold.
+  5. Keep the HMM regime forward-return table + transition matrix.
+
+Saves data/features/training_metrics.json for the bot's dashboard.
 """
 
-import pandas as pd
-import numpy as np
 import json
+import pickle
+import sys
 from pathlib import Path
-from scipy.stats import spearmanr
-import xgboost as xgb
-from sklearn.model_selection import TimeSeriesSplit
-import config as cfg
 
-def evaluate_xgboost():
-    print("\n" + "="*50)
-    print("1. XGBoost Ranking Engine Evaluation")
-    print("="*50)
-    
-    # Load all historical features (we need the actual 5-day forward returns)
-    features_dir = cfg.DATA_DIR / "features"
-    all_data = []
-    
-    for sector in cfg.SECTOR_TICKERS:
-        csv_path = features_dir / f"{sector}_features.csv"
-        if not csv_path.exists(): continue
-        df = pd.read_csv(csv_path, index_col="date", parse_dates=True)
-        # Actual future return
-        df["actual_fwd_5d"] = (df["close"].shift(-5) / df["close"]) - 1
-        df["ticker"] = sector
-        all_data.append(df.dropna())
-        
-    if not all_data: return
-    
-    # Sort chronologically for TimeSeriesSplit
-    full_df = pd.concat(all_data).sort_index()
-    
-    # Load model params from the trained PKL to ensure we evaluate the Optuna-tuned model
-    import pickle
-    with open(cfg.MODELS_DIR / "xgboost_ranking.pkl", "rb") as f:
-        model_data = pickle.load(f)
-        
-    best_params = model_data.get("params", {
-        "n_estimators": 100, "max_depth": 4, "learning_rate": 0.05,
-        "subsample": 0.8, "colsample_bytree": 0.8, "random_state": 42, "n_jobs": -1
-    })
-    
-    model = xgb.XGBRegressor(**best_params)
-    
-    # We will use the same features from config or just exclude metadata
-    feature_cols = [c for c in full_df.columns if c not in ("ticker", "close", "actual_fwd_5d")]
-    
-    X = full_df[feature_cols]
-    y = full_df["actual_fwd_5d"]
-    
-    # Purged CV (Embargo): gap=5 ensures 0 overlap between train target (T to T+5) and test features (T+6)
-    # 70/30 Chronological Split with 5-day Embargo Gap
-    dates = full_df.index.unique().sort_values()
-    split_idx = int(len(dates) * 0.70)
-    
-    train_end_date = dates[split_idx]
-    # +5 days to prevent overlapping return leakage
-    test_start_date = dates[min(split_idx + 5, len(dates) - 1)] 
-    
-    X_train = full_df.loc[full_df.index <= train_end_date][feature_cols]
-    y_train = full_df.loc[full_df.index <= train_end_date]["actual_fwd_5d"]
-    
-    X_test = full_df.loc[full_df.index >= test_start_date][feature_cols]
-    y_test = full_df.loc[full_df.index >= test_start_date]["actual_fwd_5d"]
-    
-    model.fit(X_train, y_train, verbose=False)
-    preds = model.predict(X_test)
-        
-    oof_df = full_df.loc[full_df.index >= test_start_date].copy()
-    oof_df["pred_fwd_5d"] = preds
-    
-    # 1. Rank Correlation (Spearman) on Out-Of-Sample data
-    corr, p_value = spearmanr(oof_df["pred_fwd_5d"], oof_df["actual_fwd_5d"])
-    print(f"Spearman Rank Correlation: {corr:.4f} (p-value: {p_value:.4e})")
-    print("  * Higher is better. A positive correlation means the model correctly")
-    print("    ranks which sectors will outperform relative to others.")
-    
-    
-    # 2. Top-1 Hit Rate
-    top1_hit = 0
-    total_days = 0
-    
-    for date, group in oof_df.groupby("date"):
-        if len(group) < 11: continue # Only evaluate days we have all sectors
-        top_pick = group.iloc[group["pred_fwd_5d"].argmax()]
-        if top_pick["actual_fwd_5d"] > 0:
-            top1_hit += 1
-        total_days += 1
-    hit_rate = top1_hit / total_days if total_days > 0 else 0
-    
-    print(f"\nTop-1 Sector Long-Only Hit Rate: {hit_rate:.2%} ({top1_hit}/{total_days} days)")
-    
-    # 3. Benchmark (Base Rate & SPY)
-    base_rate = (oof_df["actual_fwd_5d"] > 0).mean()
-    
-    # Get SPY performance for the exact same OOS dates
-    spy = pd.read_csv(cfg.DATA_DIR / "features" / "SPY_features.csv", index_col="date", parse_dates=True)
-    spy["actual_fwd_5d"] = (spy["close"].shift(-5) / spy["close"]) - 1
-    
-    # We only care about the unique dates in the OOS test set
-    oos_dates = oof_df.index.unique()
-    spy_oos = spy.loc[oos_dates].dropna()
-    spy_hit_rate = (spy_oos["actual_fwd_5d"] > 0).mean()
-    
-    print(f"\nBenchmarks (Random Sector vs SPY vs Model):")
-    print(f"  Random Sector Hit Rate: {base_rate:.2%}")
-    print(f"  SPY 5-Day Hit Rate:     {spy_hit_rate:.2%}")
-    print(f"  --> MODEL EDGE:         {hit_rate - spy_hit_rate:+.2%} over SPY")
-    
+import numpy as np
+import pandas as pd
+from scipy.stats import spearmanr
+
+import config as cfg
+import phase5_ranking_model as p5
+
+TOP_K = 5
+GAP = p5.TARGET_HORIZON
+TRADING_DAYS = 252
+
+# Screener factor weights (mirror Trading Bot/scripts/screener.py FACTOR_WEIGHTS),
+# mapped onto the factors this panel computes. vol_stability = -atr_pct.
+SCREENER_WEIGHTS = {
+    "momentum_125d": 0.25, "momentum_20d": 0.10, "rs_vs_sector_60d": 0.18,
+    "technical_setup": 0.12, "dist_from_52w_high": 0.08, "volume_surge": 0.08,
+    "atr_pct": -0.04,  # lower vol preferred
+}
+
+
+# ============================================================
+# Backtest helpers
+# ============================================================
+def _zscore(s: pd.Series) -> pd.Series:
+    sd = s.std(ddof=0)
+    return (s - s.mean()) / sd if sd and np.isfinite(sd) else pd.Series(0.0, index=s.index)
+
+
+def screener_score(panel: pd.DataFrame) -> pd.Series:
+    """Per-day cross-sectional z-score × fixed screener weights → baseline score."""
+    out = pd.Series(0.0, index=panel.index)
+    for f, w in SCREENER_WEIGHTS.items():
+        z = panel.groupby(level=0)[f].transform(_zscore).clip(-3, 3)
+        out = out + w * z
+    return out
+
+
+def walk_forward_oof(panel: pd.DataFrame) -> pd.Series:
+    """Purged, date-based expanding walk-forward OOF predictions for the ML ranker."""
+    dates = np.array(sorted(panel.index.unique()))
+    warmup = int(len(dates) * 0.40)
+    test_blocks = np.array_split(dates[warmup:], 5)
+    # The panel index is non-unique (one row per symbol per day), so assign through
+    # a positional boolean mask on a plain array — `oof.loc[te.index] = ...` would
+    # match every duplicate date label and blow up the length.
+    oof = np.full(len(panel), np.nan)
+
+    for block in test_blocks:
+        if len(block) == 0:
+            continue
+        block_start = pd.Timestamp(block[0])
+        train_cutoff = block_start - pd.Timedelta(days=GAP * 2)  # purge ~5 trading days
+        tr = panel[panel.index < train_cutoff]
+        te_mask = panel.index.isin(block)
+        if len(tr) < 500 or not te_mask.any():
+            continue
+        model, _ = p5.make_model()
+        model.fit(tr[p5.FACTOR_COLS], tr["target"])
+        oof[te_mask] = model.predict(panel.loc[te_mask, p5.FACTOR_COLS])
+    return pd.Series(oof, index=panel.index)
+
+
+def rank_ic(score: pd.Series, fwd: pd.Series, dates: pd.Index) -> float:
+    df = pd.DataFrame({"d": dates, "s": score.to_numpy(), "f": fwd.to_numpy()}).dropna()
+    daily = df.groupby("d").apply(lambda g: spearmanr(g["s"], g["f"]).correlation if len(g) > 3 else np.nan)
+    return float(np.nanmean(daily))
+
+
+def backtest_topk(score: pd.Series, ret_1d: pd.Series, dates: pd.Index, symbols: pd.Index, k: int = TOP_K) -> dict:
+    """Daily top-k equal-weight long book. Returns risk-adjusted metrics."""
+    df = pd.DataFrame({"date": dates, "symbol": symbols, "score": score.to_numpy(), "ret": ret_1d.to_numpy()}).dropna()
+    daily_ret, prev = [], set()
+    turn = []
+    idx = []
+    for d, g in df.groupby("date"):
+        picks = set(g.nlargest(k, "score")["symbol"])
+        if not picks:
+            continue
+        daily_ret.append(g[g["symbol"].isin(picks)]["ret"].mean())
+        idx.append(d)
+        turn.append(len(picks - prev) / k if prev else 1.0)
+        prev = picks
+    r = pd.Series(daily_ret, index=pd.to_datetime(idx)).dropna()
+    return _metrics(r, turnover=float(np.mean(turn)) if turn else None)
+
+
+def _metrics(r: pd.Series, turnover=None) -> dict:
+    if len(r) < 20:
+        return {"error": "insufficient_return_series", "days": len(r)}
+    ann_ret = float(r.mean() * TRADING_DAYS)
+    ann_vol = float(r.std(ddof=0) * np.sqrt(TRADING_DAYS))
+    downside = r[r < 0].std(ddof=0) * np.sqrt(TRADING_DAYS)
+    equity = (1 + r).cumprod()
+    dd = float((equity / equity.cummax() - 1).min())
+    cagr = float(equity.iloc[-1] ** (TRADING_DAYS / len(r)) - 1)
     return {
-        "spearman_correlation": float(corr),
-        "top_1_hit_rate_pct": float(hit_rate * 100),
-        "benchmark_spy_hit_rate_pct": float(spy_hit_rate * 100),
-        "total_eval_days": total_days
+        "days": int(len(r)),
+        "cagr_pct": round(cagr * 100, 2),
+        "sharpe": round(ann_ret / ann_vol, 3) if ann_vol else None,
+        "sortino": round(ann_ret / float(downside), 3) if downside else None,
+        "max_drawdown_pct": round(dd * 100, 2),
+        "ann_vol_pct": round(ann_vol * 100, 2),
+        "hit_rate_pct": round(float((r > 0).mean()) * 100, 2),
+        "turnover": round(turnover, 3) if turnover is not None else None,
     }
 
 
-def evaluate_hmm_regimes():
-    print("\n" + "="*50)
-    print("2. HMM Regime Classifier Evaluation")
-    print("="*50)
-    
+# ============================================================
+# Sections
+# ============================================================
+def evaluate_ranker() -> dict:
+    print("\n" + "=" * 60)
+    print("1. Cross-Sectional Ranker — Profit Scoreboard (top-5 long)")
+    print("=" * 60)
+
+    bars = p5._load_close_panel(cfg.DATA_DIR / "raw")
+    if len(bars) < 10:
+        print("  Not enough cached symbols; run Phase 1 first.")
+        return {"error": "insufficient_universe"}
+
+    panel = p5.compute_factor_panel(bars)
+    panel = panel.dropna(subset=p5.FACTOR_COLS + ["target", "fwd_return"]).copy()
+    # Next-1-day return per (date,symbol) for the equity curve.
+    panel["ret_1d"] = panel.groupby("symbol")["close"].transform(lambda c: c.pct_change().shift(-1))
+    panel = panel.dropna(subset=["ret_1d"])
+
+    dates = panel.index
+    syms = pd.Index(panel["symbol"].to_numpy())
+
+    ml_oof = walk_forward_oof(panel)
+    scr = screener_score(panel)
+
+    results = {
+        "ml_ranker": {
+            "oof_rank_ic": round(rank_ic(ml_oof, panel["fwd_return"], dates), 4),
+            **backtest_topk(ml_oof, panel["ret_1d"], dates, syms),
+        },
+        "screener_baseline": {
+            "oof_rank_ic": round(rank_ic(scr, panel["fwd_return"], dates), 4),
+            **backtest_topk(scr, panel["ret_1d"], dates, syms),
+        },
+        "spy_buy_hold": _spy_buyhold(dates.unique()),
+    }
+
+    for name, m in results.items():
+        if "error" in m:
+            print(f"  {name:18s}: {m}")
+        else:
+            print(f"  {name:18s}: Sharpe {m.get('sharpe')}  CAGR {m.get('cagr_pct')}%  "
+                  f"maxDD {m.get('max_drawdown_pct')}%  IC {m.get('oof_rank_ic','-')}")
+
+    ml_sh = results["ml_ranker"].get("sharpe") or -9
+    base_sh = results["screener_baseline"].get("sharpe") or -9
+    verdict = "BEATS" if ml_sh > base_sh else "DOES NOT beat"
+    print(f"\n  Verdict: ML ranker {verdict} the screener baseline on Sharpe "
+          f"({ml_sh} vs {base_sh}). Ship only if it beats.")
+    results["verdict_ml_beats_screener"] = bool(ml_sh > base_sh)
+    return results
+
+
+def _spy_buyhold(dates) -> dict:
+    spy = pd.read_csv(cfg.DATA_DIR / "features" / "SPY_features.csv", index_col="date", parse_dates=True).sort_index()
+    r = spy["close"].pct_change().reindex(pd.to_datetime(sorted(dates))).dropna()
+    return _metrics(r)
+
+
+def evaluate_hmm_regimes() -> dict:
+    print("\n" + "=" * 60)
+    print("2. HMM Regime — forward returns by regime")
+    print("=" * 60)
     features_dir = cfg.DATA_DIR / "features"
     spy = pd.read_csv(features_dir / "SPY_regimes.csv", index_col="date", parse_dates=True)
-    
-    # Calculate SPY 5-day forward return
-    spy["actual_fwd_5d"] = (spy["close"].shift(-5) / spy["close"]) - 1
+    spy["fwd_5d"] = spy["close"].shift(-5) / spy["close"] - 1
     spy = spy.dropna()
-    
-    print("Average 5-Day Forward Return by Regime:")
-    stats = spy.groupby("regime")["actual_fwd_5d"].agg(["mean", "std", "count"])
-    stats["mean"] = stats["mean"] * 100
-    stats["std"] = stats["std"] * 100
-    
-    # Formatting
-    stats = stats.rename(columns={"mean": "Mean Return (%)", "std": "Volatility (%)", "count": "Days in Regime"})
+    stats = spy.groupby("regime")["fwd_5d"].agg(["mean", "std", "count"])
+    stats["mean"] *= 100
+    stats["std"] *= 100
     print(stats.round(2).to_string())
-    
-    # Format for JSON
-    regime_stats = {}
-    for regime in ["Bull", "Neutral", "Caution", "Defensive"]:
-        if regime in stats.index:
-            row = stats.loc[regime]
-            regime_stats[regime] = {
-                "mean_fwd_return_pct": float(row["Mean Return (%)"]),
-                "volatility_pct": float(row["Volatility (%)"]),
-                "days_in_regime": int(row["Days in Regime"])
-            }
-            
-    # Also load the Transition Matrix from the GMM/HMM file
-    import pickle
+
+    regime_stats = {
+        r: {"mean_fwd_return_pct": float(stats.loc[r, "mean"]),
+            "volatility_pct": float(stats.loc[r, "std"]),
+            "days_in_regime": int(stats.loc[r, "count"])}
+        for r in ["Bull", "Neutral", "Caution", "Defensive"] if r in stats.index
+    }
+
     tm_list = []
     try:
         with open(cfg.MODELS_DIR / "gmm_pipeline.pkl", "rb") as f:
-            hmm_data = pickle.load(f)
-            hmm = hmm_data["pipeline"]["hmm"]
-            mapping = hmm_data["mapping"]
-            tm = hmm.transmat_
-            
-            # Reorder matrix to Bull, Neutral, Caution, Defensive
-            sorted_states = []
-            for r in ["Bull", "Neutral", "Caution", "Defensive"]:
-                for state, name in mapping.items():
-                    if name == r:
-                        sorted_states.append(state)
-                        break
-            
-            tm_reordered = tm[np.ix_(sorted_states, sorted_states)]
-            tm_list = tm_reordered.tolist()
+            hd = pickle.load(f)
+        hmm, mapping = hd["pipeline"]["hmm"], hd["mapping"]
+        order = [s for r in ["Bull", "Neutral", "Caution", "Defensive"]
+                 for s, n in mapping.items() if n == r]
+        tm_list = hmm.transmat_[np.ix_(order, order)].tolist()
     except Exception as e:
-        print(f"Could not load Transition Matrix: {e}")
+        print(f"  transition matrix unavailable: {e}")
 
-    return {
-        "forward_returns": regime_stats,
-        "transition_matrix": tm_list
-    }
+    return {"forward_returns": regime_stats, "transition_matrix": tm_list}
+
 
 if __name__ == "__main__":
-    xgb_metrics = evaluate_xgboost()
-    hmm_metrics = evaluate_hmm_regimes()
-    
-    # Save the training metrics payload for the dashboard
-    metrics_payload = {
-        "xgboost_ranking": xgb_metrics,
-        "hmm_regimes": hmm_metrics
+    payload = {
+        "ranker_scoreboard": evaluate_ranker(),
+        "hmm_regimes": evaluate_hmm_regimes(),
     }
-    
     out_path = cfg.DATA_DIR / "features" / "training_metrics.json"
     with open(out_path, "w") as f:
-        json.dump(metrics_payload, f, indent=2)
-        
-    print(f"\nSaved training metrics to {out_path.name}")
-    print("Done.")
+        json.dump(payload, f, indent=2)
+    print(f"\nSaved {out_path.name}")

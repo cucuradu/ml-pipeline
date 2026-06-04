@@ -58,8 +58,21 @@ def load_and_prepare_data(features_dir: Path) -> pd.DataFrame:
     df = pd.read_csv(csv_path, index_col="date", parse_dates=True)
     df = df.sort_index()
 
+    # Macro-arm the regime model: merge FRED-derived credit/macro signals (Phase 7)
+    # so risk-off is detected from credit + the curve, not price alone. Forward-fill
+    # across FRED's publication gaps; skip silently if the overlay is unavailable.
+    macro_path = features_dir / "macro_features.csv"
+    if macro_path.exists():
+        macro = pd.read_csv(macro_path, index_col=0, parse_dates=True).sort_index()
+        for col in ("macro_risk", "hy_oas"):
+            if col in macro.columns:
+                df[col] = macro[col].reindex(df.index, method="ffill")
+        logger.info("Merged macro overlay (macro_risk, hy_oas) into regime features.")
+    else:
+        logger.warning("macro_features.csv absent; regime model runs price-only.")
+
     feature_cols = [c for c in df.columns if c not in ("ticker", "close")]
-    
+
     df_shifted = df.copy()
     df_shifted[feature_cols] = df[feature_cols].shift(1)
     df_shifted = df_shifted.dropna(subset=feature_cols)
@@ -79,20 +92,26 @@ def train_hmm(df: pd.DataFrame, feature_cols: list[str], n_components: int = 4):
     logger.info(f"Training HMM with {n_components} components on {len(feature_cols)} features...")
     
     X = df[feature_cols].values
-    
+
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
+    # covariance_type="diag" (not "full") + min_covar regularization is the fix for
+    # the confidence-pinned-at-1.0 bug (followup S1/P7): a full 11×11 covariance per
+    # state over ~1200 samples over-fits, making one Gaussian emission so peaked that
+    # the single-day posterior saturates to 1.0. Diagonal covariances keep emissions
+    # broad enough that predict_proba returns calibrated posteriors (~0.6–0.95).
     hmm = GaussianHMM(
-        n_components=n_components, 
-        covariance_type="full", 
+        n_components=n_components,
+        covariance_type="diag",
+        min_covar=1e-2,
         n_iter=cfg.HMM_N_ITER,
-        random_state=cfg.GMM_RANDOM_STATE
+        random_state=cfg.GMM_RANDOM_STATE,
     )
 
     hmm.fit(X_scaled)
     logger.info("HMM training complete.")
-    
+
     return {"scaler": scaler, "hmm": hmm}
 
 
